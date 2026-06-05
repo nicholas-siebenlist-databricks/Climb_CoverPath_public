@@ -78,8 +78,9 @@ Write a structured evidence brief that will be reviewed and filed by outside reg
 Document structure:
 1. **Formal Header** — title "Public Comment Submission: [Drug Name] ([BLA Number]), [LCD ID], [MAC Name]"; submitter line "[MANUFACTURER LEGAL NAME]"; date and comment period close date; one-paragraph statement of interest
 2. **Executive Summary** (3 sentences maximum: drug/MAC/restriction summary; core evidence argument; recommendation to withdraw or revise)
-3. **Response to Restriction [N]: [Type]** (one section per restriction, in order)
-   - Rebuttal narrative (3–5 paragraphs)
+3. **Response to Restriction [N]: [Type]** (one section per restriction, in order — ALL restrictions must be fully addressed)
+   - Rebuttal narrative: exactly 3 paragraphs per restriction; keep each paragraph to 4–6 sentences
+   - Do NOT write more than 3 paragraphs for any single restriction — budget is equal across all restrictions
    - Internal evidence cited inline as [Trial Data] or [Registry Data]
    - External evidence cited inline as [openFDA], [eref:Author-Journal-YYYY], [LCD ID], etc.
 4. **ICD-10-CM Coding Recommendations** — markdown table of recommended supported codes and any manufacturer challenges to excluded codes

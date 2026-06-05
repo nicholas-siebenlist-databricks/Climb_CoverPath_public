@@ -389,7 +389,8 @@ Write the full evidence brief now."""
     def step6_quality_review(self, brief: str, restrictions_data: dict, mapping: dict) -> dict:
         self.on_step(5, "running", "Running 4 quality judges in parallel…")
 
-        sanitized_brief = re.sub(r'PMID\s+(\d+)', r'PMID-\1', brief[:8000])
+        # Sanitize entire brief — strip 8+ digit sequences (Presidio false positives)
+        sanitized_brief = re.sub(r'\d{8,}', '[NUM]', brief)
         brief_context = f"""BRIEF TO EVALUATE:
 {sanitized_brief}
 
