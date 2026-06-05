@@ -261,7 +261,7 @@ EXTERNAL EVIDENCE:
         context = re.sub(r'\d{8,}', '[NUM]', context)
 
         t0 = time.time()
-        raw = self._llm(STEP4_SYSTEM, context, max_tokens=6000)
+        raw = self._llm(STEP4_SYSTEM, context, max_tokens=8192)
         elapsed = int((time.time() - t0) * 1000)
 
         try:
