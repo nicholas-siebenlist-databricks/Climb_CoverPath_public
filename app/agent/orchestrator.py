@@ -25,6 +25,31 @@ from agent.tools import (
 
 MODEL = os.environ.get("COVERPATH_MODEL", "databricks-claude-sonnet-4-6")
 
+# Hard ceiling for this endpoint — applies to every generation step.
+# The model stops when it finishes; the limit only bites on truncation.
+_OUTPUT_LIMIT = 8192
+
+# Regex to strip ```json ... ``` or ``` ... ``` code fences from LLM output
+_FENCE_RE = re.compile(r'^```(?:json)?\s*\n?(.*?)(?:\n?```\s*)?$', re.DOTALL)
+
+
+def _parse_llm_json(raw: str, fallback: dict) -> tuple[dict, bool]:
+    """Parse JSON from an LLM response, handling code-fence wrapping.
+
+    Returns (result, was_truncated).
+    was_truncated=True means the output ended before its closing delimiter —
+    the caller should emit a 'warn' trace so it's visible in the event stream.
+    """
+    clean = raw.strip()
+    m = _FENCE_RE.match(clean)
+    if m:
+        clean = m.group(1).strip()
+    try:
+        return json.loads(clean), False
+    except json.JSONDecodeError:
+        truncated = bool(clean) and not clean.rstrip().endswith(('}', ']'))
+        return fallback, truncated
+
 
 def _get_client() -> OpenAI:
     from databricks.sdk import WorkspaceClient
@@ -53,7 +78,7 @@ class WorkflowOrchestrator:
             "elapsed_ms": elapsed_ms,
         })
 
-    def _llm(self, system: str, user: str, max_tokens: int = 4096) -> str:
+    def _llm(self, system: str, user: str, max_tokens: int = _OUTPUT_LIMIT) -> str:
         resp = self.client.chat.completions.create(
             model=MODEL,
             max_tokens=max_tokens,
@@ -64,7 +89,7 @@ class WorkflowOrchestrator:
         )
         return resp.choices[0].message.content or ""
 
-    def _llm_stream(self, system: str, user: str, max_tokens: int = 8192):
+    def _llm_stream(self, system: str, user: str, max_tokens: int = _OUTPUT_LIMIT):
         stream = self.client.chat.completions.create(
             model=MODEL,
             max_tokens=max_tokens,
@@ -106,25 +131,20 @@ class WorkflowOrchestrator:
         self.on_step(0, "running", "Extracting restrictions with Claude…")
         t0 = time.time()
         extraction_prompt = f"Here is the full text of the draft LCD:\n\n{lcd_data['html']}"
-        raw = self._llm(STEP1_SYSTEM, extraction_prompt, max_tokens=2048)
+        raw = self._llm(STEP1_SYSTEM, extraction_prompt)
         elapsed = int((time.time() - t0) * 1000)
 
-        try:
-            clean = raw.strip()
-            if clean.startswith("```"):
-                clean = clean.split("```")[1]
-                if clean.startswith("json"):
-                    clean = clean[4:]
-            extracted = json.loads(clean.strip())
-        except json.JSONDecodeError:
-            extracted = _FIXTURE_RESTRICTIONS
+        extracted, truncated = _parse_llm_json(raw, _FIXTURE_RESTRICTIONS)
+        if truncated:
+            self._trace("llm_extraction", "Extract restrictions from LCD HTML",
+                        f"Output truncated at {len(raw)} chars — fell back to fixture", "warn", elapsed)
 
         restriction_count = len(extracted.get("restrictions", []))
         self._trace(
             "llm_extraction",
             "Extract restrictions from LCD HTML",
             f"{restriction_count} restrictions extracted",
-            "ok", elapsed,
+            "ok" if not truncated else "warn", elapsed,
         )
         self.on_trace({
             "type": "restrictions_extracted",
@@ -261,35 +281,26 @@ EXTERNAL EVIDENCE:
         context = re.sub(r'\d{8,}', '[NUM]', context)
 
         t0 = time.time()
-        raw = self._llm(STEP4_SYSTEM, context, max_tokens=8192)
+        raw = self._llm(STEP4_SYSTEM, context)
         elapsed = int((time.time() - t0) * 1000)
 
-        try:
-            clean = raw.strip()
-            if clean.startswith("```"):
-                clean = clean.split("```")[1]
-                if clean.startswith("json"):
-                    clean = clean[4:]
-            mapping = json.loads(clean.strip())
-        except json.JSONDecodeError:
-            mapping = {"restriction_rebuttals": [], "raw": raw}
+        mapping, truncated = _parse_llm_json(raw, {"restriction_rebuttals": []})
+        if truncated:
+            self._trace("llm_evidence_mapping", "Map restrictions",
+                        f"Output truncated at {len(raw)} chars", "warn", elapsed)
 
         restriction_count = len(mapping.get("restriction_rebuttals", []))
 
-        # Log guardrail debug info when 0 rebuttals returned
-        if restriction_count == 0:
-            try:
-                raw_json = json.loads(raw.strip())
-                if 'input_guardrail' in raw_json:
-                    anon = str(raw_json['input_guardrail'][0].get('anonymized_input', ''))[:1000]
-                    self._trace("guardrail_debug", "PII guardrail fired in step4",
-                                f"anonymized: {anon}", "warn", 0)
-                else:
-                    self._trace("guardrail_debug", "Step4 unexpected JSON (no rebuttals)",
-                                raw[:500], "warn", 0)
-            except Exception:
-                self._trace("guardrail_debug", "Step4 non-JSON response",
-                            raw[:500], "warn", 0)
+        # If 0 rebuttals and no truncation, check for PII guardrail interception
+        if restriction_count == 0 and not truncated:
+            grd, _ = _parse_llm_json(raw, {})
+            if 'input_guardrail' in grd:
+                anon = str(grd['input_guardrail'][0].get('anonymized_input', ''))[:500]
+                self._trace("guardrail_debug", "PII guardrail fired in step4",
+                            f"anonymized: {anon}", "warn", 0)
+            else:
+                self._trace("guardrail_debug", "Step4 returned no rebuttals",
+                            raw[:300], "warn", 0)
 
         self._trace(
             "llm_evidence_mapping",
@@ -375,11 +386,14 @@ Write the full evidence brief now."""
 
         elapsed = int((time.time() - t0) * 1000)
         brief = "".join(brief_chunks)
+        # Heuristic: brief ending mid-word/mid-sentence likely hit the output ceiling
+        last_char = brief.rstrip()[-1:] if brief.rstrip() else ''
+        brief_truncated = last_char not in {'.', '!', '?', '\n', '#', '*', '|', '-', '—'}
         self._trace(
             "llm_brief_generation",
             "Generate structured evidence brief",
-            f"{len(brief)} chars generated",
-            "ok", elapsed,
+            f"{len(brief)} chars generated" + (" — may be truncated" if brief_truncated else ""),
+            "warn" if brief_truncated else "ok", elapsed,
         )
         self.on_step(4, "complete", "Evidence brief ready")
         return brief
@@ -398,7 +412,7 @@ RESTRICTIONS:
 {json.dumps(restrictions_data.get('restrictions', []), indent=2)}
 
 EVIDENCE MAPPING SUMMARY:
-{json.dumps(mapping.get('restriction_rebuttals', []), indent=2)[:3000]}"""
+{json.dumps(mapping.get('restriction_rebuttals', []), indent=2)}"""
 
         judge_defs = {
             "completeness": JUDGE_COMPLETENESS_SYSTEM,
@@ -412,20 +426,16 @@ EVIDENCE MAPPING SUMMARY:
         def run_judge(name: str, system_prompt: str):
             t0 = time.time()
             try:
-                raw = self._llm(system_prompt, brief_context, max_tokens=3000)
+                raw = self._llm(system_prompt, brief_context)
                 elapsed = int((time.time() - t0) * 1000)
-                clean = raw.strip()
-                if clean.startswith("```"):
-                    clean = clean.split("```")[1]
-                    if clean.startswith("json"):
-                        clean = clean[4:]
-                result = json.loads(clean.strip())
-                self._trace(
-                    f"llm_judge_{name}",
-                    f"Judge: {name}",
-                    f"Score: {result.get('score', '?')}/10",
-                    "ok", elapsed,
-                )
+                result, truncated = _parse_llm_json(raw, {"score": 0, "error": "parse_failed"})
+                if truncated:
+                    self._trace(f"llm_judge_{name}", f"Judge: {name}",
+                                f"Output truncated at {len(raw)} chars", "warn", elapsed)
+                    result = {"score": 0, "error": f"Output truncated at {len(raw)} chars"}
+                else:
+                    self._trace(f"llm_judge_{name}", f"Judge: {name}",
+                                f"Score: {result.get('score', '?')}/10", "ok", elapsed)
                 return name, result
             except Exception as e:
                 elapsed = int((time.time() - t0) * 1000)
