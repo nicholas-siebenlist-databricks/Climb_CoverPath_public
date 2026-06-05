@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CoverPath — Coverage Intelligence</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #F7F5F0; color: #1A1A1A; display: flex; }
+    #root { display: flex; width: 100%; }
+
+    /* Sidebar */
+    .sidebar { width: 232px; background: #1B3152; color: #fff; display: flex; flex-direction: column; flex-shrink: 0; height: 100vh; position: sticky; top: 0; }
+    .sidebar-logo { padding: 22px 20px 18px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .logo-mark { font-size: 22px; font-weight: 800; letter-spacing: -1px; color: #fff; }
+    .logo-mark span { color: #E05A2B; }
+    .logo-sub { font-size: 11px; opacity: 0.5; margin-top: 2px; letter-spacing: 0.3px; }
+    .threat-badge { margin: 12px 16px 4px; padding: 7px 12px; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; text-align: center; }
+    .tb-pending { background: rgba(148,163,184,0.15); color: #94A3B8; }
+    .tb-running { background: rgba(224,90,43,0.18); color: #F0834E; }
+    .tb-review  { background: rgba(239,68,68,0.18); color: #F87171; }
+    .tb-counsel { background: rgba(34,197,94,0.18); color: #4ADE80; }
+    .sidebar-nav { flex: 1; padding: 8px 0; overflow-y: auto; }
+    .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 20px; cursor: pointer; font-size: 13.5px; color: rgba(255,255,255,0.6); transition: all 0.12s; border-left: 3px solid transparent; user-select: none; }
+    .nav-item:hover { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.04); }
+    .nav-item.active { color: #fff; background: rgba(255,255,255,0.09); border-left-color: #E05A2B; }
+    .nav-icon { font-size: 15px; width: 20px; text-align: center; opacity: 0.9; }
+    .sidebar-footer { padding: 14px 20px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 11px; color: rgba(255,255,255,0.25); }
+
+    /* Main layout */
+    .main { flex: 1; display: flex; flex-direction: column; min-height: 100vh; overflow: hidden; }
+    .topbar { background: #fff; border-bottom: 1px solid #E8ECF0; padding: 0 28px; height: 52px; display: flex; align-items: center; gap: 14px; flex-shrink: 0; position: sticky; top: 0; z-index: 10; }
+    .topbar-title { font-size: 16px; font-weight: 600; flex: 1; color: #1A1A1A; }
+    .content { flex: 1; overflow-y: auto; padding: 28px 32px; }
+
+    /* Status indicator */
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    .sd-idle    { background: #CBD5E1; }
+    .sd-running { background: #E05A2B; animation: blink 1s ease-in-out infinite; }
+    .sd-done    { background: #22C55E; }
+    .sd-error   { background: #EF4444; }
+    @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
+    /* Cards */
+    .card { background: #fff; border-radius: 10px; border: 1px solid #E8ECF0; padding: 22px 24px; margin-bottom: 18px; }
+    .card-title { font-size: 11px; font-weight: 700; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.7px; margin-bottom: 16px; }
+
+    /* Info grid */
+    .info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+    .info-card { background: #fff; border-radius: 10px; border: 1px solid #E8ECF0; padding: 18px 20px; }
+    .info-label { font-size: 10.5px; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 5px; }
+    .info-value { font-size: 15px; font-weight: 700; color: #111827; }
+    .info-sub { font-size: 12px; color: #64748B; margin-top: 3px; }
+
+    /* Restriction list */
+    .restriction-list { background: #FFF7F4; border-radius: 8px; border-left: 4px solid #E05A2B; padding: 14px 16px; margin-bottom: 20px; }
+    .restriction-title { font-size: 12px; font-weight: 700; color: #E05A2B; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+    .restriction-item { display: flex; gap: 10px; font-size: 13px; color: #475569; padding: 4px 0; }
+    .r-id { font-weight: 700; color: #E05A2B; min-width: 26px; }
+
+    /* Buttons */
+    .btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px; border-radius: 7px; font-size: 13.5px; font-weight: 600; cursor: pointer; border: none; transition: all 0.13s; white-space: nowrap; }
+    .btn-primary { background: #E05A2B; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #C84E22; }
+    .btn-secondary { background: #F1F5F9; color: #64748B; }
+    .btn-secondary:hover:not(:disabled) { background: #E2E8F0; }
+    .btn-outline { background: transparent; color: #E05A2B; border: 1.5px solid #E05A2B; }
+    .btn-outline:hover:not(:disabled) { background: rgba(224,90,43,0.06); }
+    .btn-lg { padding: 12px 24px; font-size: 15px; border-radius: 9px; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Spinner */
+    .spinner { width: 15px; height: 15px; border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Step bar */
+    .step-bar { display: flex; align-items: flex-start; }
+    .step-item { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .step-circle { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; transition: all 0.25s; position: relative; z-index: 1; }
+    .s-pending .step-circle  { background: #F1F5F9; color: #94A3B8; border: 2px solid #E2E8F0; }
+    .s-running .step-circle  { background: #FFF4EF; color: #E05A2B; border: 2px solid #E05A2B; animation: pulse-ring 1.4s ease-out infinite; }
+    .s-complete .step-circle { background: #F0FDF4; color: #16A34A; border: 2px solid #22C55E; }
+    .s-error .step-circle    { background: #FEF2F2; color: #DC2626; border: 2px solid #EF4444; }
+    @keyframes pulse-ring { 0%,100% { box-shadow: 0 0 0 0 rgba(224,90,43,0.25); } 60% { box-shadow: 0 0 0 7px rgba(224,90,43,0); } }
+    .step-label { font-size: 10.5px; color: #94A3B8; text-align: center; margin-top: 7px; max-width: 82px; line-height: 1.35; }
+    .s-running .step-label  { color: #E05A2B; font-weight: 600; }
+    .s-complete .step-label { color: #16A34A; }
+    .step-connector-wrap { flex: 1; display: flex; align-items: center; padding-bottom: 28px; }
+    .step-connector { height: 2px; width: 100%; background: #E2E8F0; transition: background 0.4s; }
+    .step-connector.done   { background: #22C55E; }
+    .step-connector.active { background: linear-gradient(90deg, #22C55E 0%, #E05A2B 100%); }
+
+    /* Step messages */
+    .step-msg { padding: 8px 12px; border-radius: 6px; font-size: 12.5px; margin-bottom: 5px; border-left: 3px solid #E2E8F0; background: #F8FAFC; color: #64748B; }
+    .step-msg.running  { border-left-color: #E05A2B; color: #92400E; background: #FFFBF7; }
+    .step-msg.complete { border-left-color: #22C55E; color: #166534; background: #F0FDF4; }
+    .step-msg.error    { border-left-color: #EF4444; color: #991B1B; background: #FEF2F2; }
+
+    /* Trace panel */
+    .trace-scroll { overflow-x: auto; max-height: 310px; overflow-y: auto; border-radius: 6px; border: 1px solid #F1F5F9; }
+    .trace-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .trace-table th { background: #F8FAFC; padding: 8px 10px; text-align: left; font-size: 10.5px; font-weight: 700; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #E8ECF0; position: sticky; top: 0; }
+    .trace-table td { padding: 8px 10px; border-bottom: 1px solid #F8FAFC; vertical-align: top; word-break: break-word; }
+    .trace-table tr:last-child td { border-bottom: none; }
+    .tc-ts   { color: #94A3B8; font-family: monospace; white-space: nowrap; }
+    .tc-tool { font-weight: 600; color: #1B3152; }
+    .tc-in   { color: #64748B; max-width: 160px; }
+    .tc-out  { color: #475569; max-width: 200px; }
+    .tc-ok   { color: #16A34A; font-weight: 700; }
+    .tc-err  { color: #DC2626; font-weight: 700; }
+    .tc-ms   { color: #94A3B8; text-align: right; white-space: nowrap; }
+
+    /* Brief */
+    .brief-meta { display: flex; gap: 20px; padding-bottom: 16px; margin-bottom: 20px; border-bottom: 1px solid #F1F5F9; }
+    .bm-item { }
+    .bm-label { font-size: 10px; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+    .bm-value { font-size: 13px; font-weight: 600; color: #1A1A1A; }
+    .brief-body { font-size: 14px; line-height: 1.75; color: #1F2937; }
+    .brief-body h1 { font-size: 20px; color: #1B3152; margin: 0 0 12px; }
+    .brief-body h2 { font-size: 16px; color: #1B3152; margin: 22px 0 8px; padding-bottom: 5px; border-bottom: 1px solid #E8ECF0; }
+    .brief-body h3 { font-size: 14px; color: #334155; margin: 16px 0 6px; }
+    .brief-body p  { margin-bottom: 12px; }
+    .brief-body ul, .brief-body ol { margin: 6px 0 12px 22px; }
+    .brief-body li { margin-bottom: 4px; }
+    .brief-body strong { color: #111827; }
+    .brief-body blockquote { border-left: 3px solid #E05A2B; padding: 8px 16px; background: #FFF7F4; border-radius: 0 6px 6px 0; margin: 12px 0; color: #92400E; }
+
+    /* Data table */
+    .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .data-table th { padding: 10px 12px; text-align: left; font-size: 10.5px; font-weight: 700; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #E8ECF0; background: #F8FAFC; }
+    .data-table td { padding: 12px; border-bottom: 1px solid #F1F5F9; vertical-align: top; }
+    .data-table tr:last-child td { border-bottom: none; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .tag-ext { background: #EFF6FF; color: #1D4ED8; }
+    .tag-int { background: #F0FDF4; color: #15803D; }
+    .tag-fix { background: #FFF7ED; color: #C2410C; }
+
+    /* Form */
+    .form-group { margin-bottom: 18px; }
+    .form-label { font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; display: block; }
+    .form-input { width: 100%; padding: 9px 12px; border: 1.5px solid #E2E8F0; border-radius: 7px; font-size: 14px; color: #1A1A1A; background: #fff; transition: border-color 0.12s; }
+    .form-input:focus { outline: none; border-color: #E05A2B; }
+    .form-input[readonly] { background: #F8FAFC; color: #94A3B8; cursor: default; }
+    .form-hint { font-size: 11.5px; color: #94A3B8; margin-top: 4px; }
+
+    /* Empty state */
+    .empty { text-align: center; padding: 56px 24px; color: #94A3B8; }
+    .empty-icon { font-size: 44px; margin-bottom: 12px; }
+    .empty-title { font-size: 16px; font-weight: 600; color: #64748B; margin-bottom: 6px; }
+    .empty-sub { font-size: 13px; }
+
+    /* Page header */
+    .page-header { margin-bottom: 22px; }
+    .page-title { font-size: 22px; font-weight: 700; color: #111827; margin-bottom: 3px; }
+    .page-subtitle { font-size: 13.5px; color: #64748B; }
+
+    /* Source cards */
+    .source-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .source-card { padding: 12px 14px; background: #F8FAFC; border-radius: 8px; border: 1px solid #E8ECF0; }
+    .source-name { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+    .source-sub  { font-size: 12px; color: #64748B; margin-bottom: 6px; }
+
+    /* Brief streaming preview */
+    .brief-preview { font-family: monospace; font-size: 12px; color: #475569; max-height: 120px; overflow: hidden; position: relative; }
+    .brief-preview::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 40px; background: linear-gradient(transparent, #fff); }
+
+    code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; background: #F1F5F9; padding: 1px 5px; border-radius: 3px; }
+
+    /* LCD source viewer */
+    .lcd-source-box { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11.5px; line-height: 1.6; color: #475569; background: #F8FAFC; border: 1px solid #E8ECF0; border-radius: 7px; padding: 14px 16px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+    .lcd-source-loading { font-size: 12.5px; color: #94A3B8; padding: 18px 0; text-align: center; }
+
+    /* Restriction extraction states */
+    .restriction-extracting { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #FFFBF7; border-radius: 7px; border-left: 3px solid #E05A2B; color: #92400E; font-size: 13px; margin-bottom: 10px; }
+    .restriction-pending { padding: 10px 12px; background: #F8FAFC; border-radius: 7px; border-left: 3px solid #E2E8F0; color: #94A3B8; font-size: 13px; margin-bottom: 10px; }
+    @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+    .restriction-item-extracted { animation: fadeSlideIn 0.35s ease-out both; }
+
+    /* Judge panels */
+    .judge-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .judge-card { background: #fff; border-radius: 10px; border: 1px solid #E8ECF0; padding: 18px 20px; }
+    .judge-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .judge-name { font-size: 13px; font-weight: 700; color: #111827; flex: 1; }
+    .judge-score { font-size: 22px; font-weight: 800; line-height: 1; }
+    .score-high   { color: #16A34A; }
+    .score-mid    { color: #D97706; }
+    .score-low    { color: #DC2626; }
+    .judge-score-label { font-size: 10px; color: #94A3B8; }
+    .judge-section { margin-top: 12px; }
+    .judge-section-label { font-size: 10px; font-weight: 700; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+    .judge-list { list-style: none; padding: 0; }
+    .judge-list li { font-size: 12.5px; color: #475569; padding: 3px 0; border-bottom: 1px solid #F8FAFC; }
+    .judge-list li:last-child { border-bottom: none; }
+    .judge-rec { font-size: 12.5px; color: #1B3152; font-style: italic; margin-top: 8px; padding: 8px 10px; background: #F0F4FA; border-radius: 6px; }
+    .judge-pending { text-align: center; padding: 32px; color: #94A3B8; font-size: 13px; }
+    .threat-badge-inline { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+    .threat-high   { background: #FEE2E2; color: #DC2626; }
+    .threat-medium { background: #FEF3C7; color: #D97706; }
+    .threat-low    { background: #DCFCE7; color: #16A34A; }
+    .risk-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+    .risk-table th { padding: 6px 8px; text-align: left; font-size: 10.5px; font-weight: 700; color: #94A3B8; text-transform: uppercase; background: #F8FAFC; border-bottom: 1px solid #E8ECF0; }
+    .risk-table td { padding: 8px; border-bottom: 1px solid #F8FAFC; vertical-align: top; }
+    .adequacy-strong   { color: #16A34A; font-weight: 700; }
+    .adequacy-adequate { color: #D97706; font-weight: 700; }
+    .adequacy-weak     { color: #DC2626; font-weight: 700; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const STEP_LABELS = [
+  'Ingest & Extract',
+  'External Evidence',
+  'Internal Evidence',
+  'Evidence Mapping',
+  'Brief Generation',
+  'Quality Review',
+];
+
+// ── Workflow hook ──────────────────────────────────────────────────────────────
+function useWorkflow() {
+  const [status, setStatus]           = useState('idle');
+  const [steps, setSteps]             = useState(Array(6).fill({ status: 'pending', message: '' }));
+  const [traces, setTraces]           = useState([]);
+  const [briefChunks, setBriefChunks] = useState([]);
+  const [threatStatus, setThreatStatus] = useState('Workflow Pending');
+  const [judges, setJudges]           = useState({});
+  const [extractedData, setExtractedData] = useState(null);
+  const [lcdLoaded, setLcdLoaded]     = useState(false);
+  const cursorRef   = useRef(0);
+  const pollingRef  = useRef(null);
+  const statusRef   = useRef('idle');
+
+  const applyEvent = useCallback((ev) => {
+    if (ev.type === 'step') {
+      setSteps(prev => {
+        const next = [...prev];
+        next[ev.idx] = { status: ev.status, message: ev.message };
+        return next;
+      });
+    } else if (ev.type === 'trace') {
+      setTraces(prev => [...prev, ev]);
+    } else if (ev.type === 'brief_chunk') {
+      setBriefChunks(prev => [...prev, ev.content]);
+    } else if (ev.type === 'judge_result') {
+      setJudges(prev => ({ ...prev, [ev.judge]: ev.result }));
+    } else if (ev.type === 'lcd_loaded') {
+      setLcdLoaded(true);
+    } else if (ev.type === 'restrictions_extracted') {
+      setExtractedData(ev);
+    } else if (ev.type === 'done') {
+      setStatus('done');
+      statusRef.current = 'done';
+      setThreatStatus(ev.threat_status);
+    } else if (ev.type === 'error') {
+      setStatus('error');
+      statusRef.current = 'error';
+    }
+  }, []);
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }, []);
+
+  const poll = useCallback(async () => {
+    try {
+      const res  = await fetch(`/api/events?cursor=${cursorRef.current}`);
+      const data = await res.json();
+      for (const ev of data.events) applyEvent(ev);
+      cursorRef.current = data.cursor;
+      if (data.status === 'done' || data.status === 'error') {
+        stopPolling();
+        setStatus(data.status);
+        statusRef.current = data.status;
+      }
+    } catch (e) {
+      console.error('Poll error:', e);
+    }
+  }, [applyEvent, stopPolling]);
+
+  const startPolling = useCallback(() => {
+    stopPolling();
+    pollingRef.current = setInterval(poll, 500);
+  }, [poll, stopPolling]);
+
+  const runWorkflow = useCallback(async (lcdId = 'MCD-A-XXXXX', caseContext = {}) => {
+    stopPolling();
+    cursorRef.current = 0;
+    statusRef.current = 'running';
+    setStatus('running');
+    setSteps(Array(6).fill({ status: 'pending', message: '' }));
+    setTraces([]);
+    setBriefChunks([]);
+    setJudges({});
+    setExtractedData(null);
+    setLcdLoaded(false);
+    setThreatStatus('Analyzing…');
+
+    try {
+      const res = await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lcd_id: lcdId, case_context: caseContext }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to start');
+      }
+      startPolling();
+    } catch (e) {
+      setStatus('error');
+      statusRef.current = 'error';
+    }
+  }, [stopPolling, startPolling]);
+
+  const reset = useCallback(async () => {
+    stopPolling();
+    await fetch('/api/reset', { method: 'POST' });
+    cursorRef.current = 0;
+    statusRef.current = 'idle';
+    setStatus('idle');
+    setSteps(Array(6).fill({ status: 'pending', message: '' }));
+    setTraces([]);
+    setBriefChunks([]);
+    setJudges({});
+    setExtractedData(null);
+    setLcdLoaded(false);
+    setThreatStatus('Workflow Pending');
+  }, [stopPolling]);
+
+  const markCounsel = useCallback(async () => {
+    await fetch('/api/mark-counsel-review', { method: 'POST' });
+    setThreatStatus('Counsel Review');
+  }, []);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  return {
+    status,
+    steps,
+    traces,
+    judges,
+    extractedData,
+    lcdLoaded,
+    brief: briefChunks.join(''),
+    threatStatus,
+    runWorkflow,
+    reset,
+    markCounsel,
+  };
+}
+
+// ── Sidebar ────────────────────────────────────────────────────────────────────
+function Sidebar({ page, setPage, threatStatus }) {
+  const navItems = [
+    { id: 'dashboard', label: 'Dashboard',       icon: '⊞' },
+    { id: 'workflow',  label: 'Workflow',         icon: '▷' },
+    { id: 'brief',     label: 'Evidence Brief',   icon: '≡' },
+    { id: 'quality',   label: 'Quality Review',   icon: '✦' },
+    { id: 'data',      label: 'Data Sources',     icon: '⊡' },
+    { id: 'settings',  label: 'Settings',         icon: '⚙' },
+  ];
+
+  const tbClass = {
+    'Workflow Pending': 'tb-pending',
+    'Analyzing…': 'tb-running',
+    'Review Required':  'tb-review',
+    'Counsel Review':   'tb-counsel',
+  }[threatStatus] || 'tb-pending';
+
+  return (
+    <div className="sidebar">
+      <div className="sidebar-logo">
+        <div className="logo-mark">Cover<span>Path</span></div>
+        <div className="logo-sub">Coverage Intelligence Platform</div>
+      </div>
+      <div className={`threat-badge ${tbClass}`}>{threatStatus}</div>
+      <nav className="sidebar-nav">
+        {navItems.map(n => (
+          <div
+            key={n.id}
+            className={`nav-item${page === n.id ? ' active' : ''}`}
+            onClick={() => setPage(n.id)}
+          >
+            <span className="nav-icon">{n.icon}</span>
+            {n.label}
+          </div>
+        ))}
+      </nav>
+      <div className="sidebar-footer">Powered by Databricks</div>
+    </div>
+  );
+}
+
+// ── Step Bar ───────────────────────────────────────────────────────────────────
+function StepBar({ steps }) {
+  return (
+    <div className="step-bar">
+      {steps.map((s, i) => (
+        <React.Fragment key={i}>
+          <div className={`step-item s-${s.status}`}>
+            <div className="step-circle">
+              {s.status === 'complete' ? '✓' : s.status === 'error' ? '✕' : i + 1}
+            </div>
+            <div className="step-label">{STEP_LABELS[i]}</div>
+          </div>
+          {i < steps.length - 1 && (
+            <div className="step-connector-wrap">
+              <div className={`step-connector${
+                steps[i].status === 'complete' && steps[i+1].status !== 'pending'
+                  ? ' active'
+                  : steps[i+1].status === 'complete'
+                  ? ' done'
+                  : ''
+              }`} />
+            </div>
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+// ── Trace Panel ────────────────────────────────────────────────────────────────
+function TracePanel({ traces }) {
+  const bottomRef = useRef(null);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [traces.length]);
+
+  if (!traces.length) {
+    return <div style={{ fontSize: 12.5, color: '#94A3B8', padding: '10px 0' }}>Tool calls will appear here as the workflow executes…</div>;
+  }
+  return (
+    <div className="trace-scroll">
+      <table className="trace-table">
+        <thead>
+          <tr>
+            <th>Time</th><th>Tool</th><th>Input</th><th>Output</th><th>Status</th><th>ms</th>
+          </tr>
+        </thead>
+        <tbody>
+          {traces.map((t, i) => (
+            <tr key={i}>
+              <td className="tc-ts">{t.ts}</td>
+              <td className="tc-tool">{t.tool}</td>
+              <td className="tc-in">{t.input}</td>
+              <td className="tc-out">{t.output}</td>
+              <td className={t.status === 'ok' ? 'tc-ok' : 'tc-err'}>{t.status}</td>
+              <td className="tc-ms">{t.elapsed_ms}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div ref={bottomRef} />
+    </div>
+  );
+}
+
+// ── Dashboard ──────────────────────────────────────────────────────────────────
+function DashboardPage({ status, runWorkflow, reset, lcdId, extractedData, lcdLoaded }) {
+  const [lcdText, setLcdText] = React.useState(null);
+  const isRunning  = status === 'running';
+  const isDone     = status === 'done';
+  const isError    = status === 'error';
+  const isExtracting = isRunning && lcdLoaded && !extractedData;
+  const isFetching   = isRunning && !lcdLoaded;
+
+  React.useEffect(() => {
+    fetch('/api/lcd-source')
+      .then(r => r.json())
+      .then(d => setLcdText(d.text || ''))
+      .catch(() => setLcdText(''));
+  }, []);
+
+  const restrictions = extractedData?.restrictions || [];
+
+  return (
+    <div>
+      <div className="page-header">
+        <div className="page-title">LCD Coverage Response</div>
+        <div className="page-subtitle">AI-powered evidence brief for Medicare Local Coverage Determination comments</div>
+      </div>
+
+      <div className="info-grid">
+        <div className="info-card">
+          <div className="info-label">Drug</div>
+          <div className="info-value">{extractedData?.drug_name || 'Suvaxilumab'}</div>
+          <div className="info-sub">Anti-C5 complement inhibitor · BLA 761204</div>
+        </div>
+        <div className="info-card">
+          <div className="info-label">Indication</div>
+          <div className="info-value">aHUS</div>
+          <div className="info-sub">Atypical Hemolytic Uremic Syndrome</div>
+        </div>
+        <div className="info-card">
+          <div className="info-label">MAC</div>
+          <div className="info-value">{extractedData?.mac_name || 'CGS Administrators'}</div>
+          <div className="info-sub">{extractedData?.mac_jurisdiction || 'MO / KS / NE / IA'} jurisdiction</div>
+        </div>
+      </div>
+
+      {/* LCD source document viewer */}
+      <div className="card">
+        <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>Draft LCD Source Document</span>
+          <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: '#EFF6FF', color: '#1D4ED8' }}>
+            {lcdId}
+          </span>
+          {lcdLoaded && (
+            <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: '#DCFCE7', color: '#166534' }}>
+              ✓ Fetched
+            </span>
+          )}
+          {isFetching && (
+            <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: '#FFFBF7', color: '#E05A2B' }}>
+              Fetching…
+            </span>
+          )}
+        </div>
+        {lcdText === null ? (
+          <div className="lcd-source-loading">Loading document…</div>
+        ) : lcdText === '' ? (
+          <div className="lcd-source-loading" style={{ color: '#DC2626' }}>Document unavailable</div>
+        ) : (
+          <div className="lcd-source-box">{lcdText}</div>
+        )}
+        <div style={{ marginTop: 8, fontSize: 11.5, color: '#94A3B8', display: 'flex', gap: 16 }}>
+          <span>Comment period: 05/21/2026 – 07/05/2026</span>
+          <span>·</span>
+          <span>CGS Administrators LLC</span>
+          <span>·</span>
+          <span>Contractor #15202 — MAC Part B</span>
+        </div>
+      </div>
+
+      {/* Restrictions — dynamic */}
+      <div className="card">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div className="card-title" style={{ marginBottom: 0 }}>
+            {extractedData
+              ? `${restrictions.length} Restrictions Extracted by Claude`
+              : isExtracting
+              ? 'Extracting restrictions…'
+              : isFetching
+              ? 'Fetching LCD…'
+              : 'Restrictions Requiring Response'}
+          </div>
+          {isExtracting && <span className="spinner" style={{ borderColor: 'rgba(224,90,43,0.35)', borderTopColor: '#E05A2B' }} />}
+        </div>
+
+        {!isRunning && !extractedData && (
+          <div className="restriction-pending">
+            Run analysis to extract restrictions from the LCD document above
+          </div>
+        )}
+
+        {(isRunning && isFetching) && (
+          <div className="restriction-extracting">
+            <span className="spinner" style={{ borderColor: 'rgba(224,90,43,0.35)', borderTopColor: '#E05A2B', flexShrink: 0 }} />
+            Fetching draft LCD from CMS Coverage Database…
+          </div>
+        )}
+
+        {(isRunning && isExtracting) && (
+          <div className="restriction-extracting">
+            <span className="spinner" style={{ borderColor: 'rgba(224,90,43,0.35)', borderTopColor: '#E05A2B', flexShrink: 0 }} />
+            Parsing HTML and extracting restrictions with Claude…
+          </div>
+        )}
+
+        {restrictions.length > 0 && (
+          <div className="restriction-list" style={{ marginBottom: 0 }}>
+            <div className="restriction-title">Extracted Restrictions</div>
+            {restrictions.map((r, i) => (
+              <div key={r.id || i} className="restriction-item restriction-item-extracted" style={{ animationDelay: `${i * 80}ms` }}>
+                <span className="r-id">{r.id}</span>
+                <span>
+                  <strong style={{ color: '#374151' }}>{r.type}</strong>
+                  {r.criteria_text ? ` — ${r.criteria_text.slice(0, 120)}${r.criteria_text.length > 120 ? '…' : ''}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: restrictions.length > 0 ? 16 : 0 }}>
+          {!isDone && !isError ? (
+            <button className="btn btn-primary btn-lg" onClick={runWorkflow} disabled={isRunning}>
+              {isRunning ? <><span className="spinner" />Analyzing…</> : <>▷ &nbsp;Run Analysis</>}
+            </button>
+          ) : (
+            <>
+              <button className="btn btn-secondary" onClick={reset}>↺ &nbsp;Reset</button>
+              {isDone && <span style={{ fontSize: 13, color: '#16A34A', fontWeight: 600 }}>✓ Analysis complete — view the Evidence Brief</span>}
+              {isError && <span style={{ fontSize: 13, color: '#DC2626', fontWeight: 600 }}>✕ Workflow error — reset to retry</span>}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Evidence Sources</div>
+        <div className="source-grid">
+          {[
+            { name: 'CMS Coverage Database', sub: 'Prior LCDs L34007 & L34314 — C5 class precedent', type: 'External' },
+            { name: 'openFDA Drug Labels API', sub: 'Soliris label as class analogue reference', type: 'External' },
+            { name: 'ClinicalTrials.gov v2 API', sub: 'NCT01844856 — RECOVER pivotal trial (eculizumab aHUS)', type: 'External' },
+            { name: 'PubMed E-utilities', sub: '3 publications · PMIDs 22553501, 25908597, 31395980', type: 'External' },
+            { name: 'Unity Catalog — Trial Data', sub: 'trial_enrollment · trial_outcomes · trial_adverse_events', type: 'Internal' },
+            { name: 'Unity Catalog — Registry', sub: 'registry_patients · registry_outcomes (CGS states)', type: 'Internal' },
+          ].map((s, i) => (
+            <div key={i} className="source-card">
+              <div className="source-name">{s.name}</div>
+              <div className="source-sub">{s.sub}</div>
+              <span className={`tag ${s.type === 'Internal' ? 'tag-int' : 'tag-ext'}`}>{s.type}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Workflow Page ──────────────────────────────────────────────────────────────
+function WorkflowPage({ status, steps, traces, brief }) {
+  if (status === 'idle') {
+    return (
+      <div>
+        <div className="page-header">
+          <div className="page-title">Workflow</div>
+          <div className="page-subtitle">6-step ReAct analysis pipeline with parallel evidence retrieval and LLM quality judges</div>
+        </div>
+        <div className="empty">
+          <div className="empty-icon">▷</div>
+          <div className="empty-title">No workflow running</div>
+          <div className="empty-sub">Start an analysis from the Dashboard to see live step progress and tool traces here.</div>
+        </div>
+      </div>
+    );
+  }
+
+  const activeStep  = steps.findIndex(s => s.status === 'running');
+  const activeMsgs  = steps.filter(s => s.message);
+
+  return (
+    <div>
+      <div className="page-header">
+        <div className="page-title">Workflow</div>
+        <div className="page-subtitle" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span className={`status-dot sd-${status}`} />
+          {status === 'running' ? 'Running…' : status === 'done' ? 'Complete' : 'Error'}
+          {traces.length > 0 && <span style={{ color: '#94A3B8', marginLeft: 4 }}>· {traces.length} tool calls</span>}
+        </div>
+      </div>
+
+      <div className="card">
+        <StepBar steps={steps} />
+        {activeStep >= 0 && steps[activeStep].message && (
+          <div className="step-msg running" style={{ marginTop: 12 }}>
+            <strong>Step {activeStep + 1} — {STEP_LABELS[activeStep]}:</strong> {steps[activeStep].message}
+          </div>
+        )}
+      </div>
+
+      {activeMsgs.length > 0 && (
+        <div className="card">
+          <div className="card-title">Step Progress</div>
+          {steps.map((s, i) => s.message ? (
+            <div key={i} className={`step-msg ${s.status}`}>
+              <strong>Step {i + 1} · {STEP_LABELS[i]}:</strong> {s.message}
+            </div>
+          ) : null)}
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-title">Tool Trace ({traces.length})</div>
+        <TracePanel traces={traces} />
+      </div>
+
+      {brief && (
+        <div className="card">
+          <div className="card-title">Brief Preview</div>
+          <div className="brief-preview">{brief.slice(0, 600)}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Evidence Brief ─────────────────────────────────────────────────────────────
+function BriefPage({ brief, status, markCounsel, threatStatus }) {
+  if (!brief) {
+    return (
+      <div>
+        <div className="page-header">
+          <div className="page-title">Evidence Brief</div>
+          <div className="page-subtitle">AI-generated CMS public comment response</div>
+        </div>
+        <div className="empty">
+          <div className="empty-icon">≡</div>
+          <div className="empty-title">Brief not yet generated</div>
+          <div className="empty-sub">Run the analysis workflow from the Dashboard to generate the evidence brief.</div>
+        </div>
+      </div>
+    );
+  }
+
+  let html = brief;
+  try { html = marked.parse(brief); } catch(_) {}
+
+  return (
+    <div>
+      <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div>
+          <div className="page-title">Evidence Brief</div>
+          <div className="page-subtitle">AI-generated CMS public comment · ready for legal review</div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
+          {threatStatus !== 'Counsel Review' ? (
+            <button className="btn btn-outline" onClick={markCounsel}>
+              ✓ &nbsp;Mark for Counsel Review
+            </button>
+          ) : (
+            <span style={{ fontSize: 13, color: '#16A34A', fontWeight: 600, padding: '9px 0' }}>
+              ✓ Marked for Counsel Review
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="brief-meta">
+          <div className="bm-item"><div className="bm-label">LCD</div><div className="bm-value">MCD-A-XXXXX</div></div>
+          <div className="bm-item"><div className="bm-label">Drug</div><div className="bm-value">Suvaxilumab</div></div>
+          <div className="bm-item"><div className="bm-label">Indication</div><div className="bm-value">aHUS</div></div>
+          <div className="bm-item"><div className="bm-label">MAC</div><div className="bm-value">CGS Administrators LLC</div></div>
+          <div className="bm-item"><div className="bm-label">Comment Deadline</div><div className="bm-value">July 5, 2026</div></div>
+        </div>
+        <div
+          className="brief-body"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Data Sources ───────────────────────────────────────────────────────────────
+function DataSourcesPage() {
+  const internalTables = [
+    { name: 'trial_enrollment',     rows: 127, desc: 'Patient enrollment — initiation setting (Inpatient/Outpatient) and prior PE course history', keys: 'patient_id, initiation_setting, prior_pe_courses' },
+    { name: 'trial_outcomes',       rows: 254, desc: 'TMA response at weeks 26 and 52; complete_tma_response flag per visit', keys: 'patient_id, visit_week, complete_tma_response' },
+    { name: 'trial_adverse_events', rows: 89,  desc: 'Adverse events; confirmed 0 meningococcal infections in trial population', keys: 'patient_id, ae_term, ae_grade, serious' },
+    { name: 'registry_patients',    rows: 312, desc: 'Real-world registry including CGS-jurisdiction patients (MO/KS/NE/IA)', keys: 'registry_id, initiation_setting, treating_state' },
+    { name: 'registry_outcomes',    rows: 936, desc: 'Monthly real-world outcomes through 12 months — hospitalization and sustained TMA response', keys: 'registry_id, months_from_start, sustained_tma_response, hospitalization_required' },
+  ];
+  const externalSources = [
+    { name: 'CMS Coverage Database', type: 'REST (fixture)', use: 'Draft LCD MCD-A-XXXXX text + prior LCDs L38291 & L39104 for C5 class precedent' },
+    { name: 'openFDA Drug Labels API', type: 'REST', use: 'Soliris (eculizumab) label as class analogue; same mechanism, no step therapy in indication' },
+    { name: 'ClinicalTrials.gov v2 API', type: 'REST', use: 'NCT01844856 — RECOVER pivotal eculizumab aHUS trial; no plasma exchange prerequisite' },
+    { name: 'PubMed E-utilities', type: 'REST', use: 'PMIDs 22553501 (Legendre NEJM 2013), 25908597 (Fakhouri 2015), 31395980 (practice guidelines)' },
+  ];
+
+  return (
+    <div>
+      <div className="page-header">
+        <div className="page-title">Data Sources</div>
+        <div className="page-subtitle">Unity Catalog schema: <code>siebenlist_catalog.coverpath_demo</code></div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Internal — Unity Catalog Delta Tables</div>
+        <table className="data-table">
+          <thead>
+            <tr><th>Table</th><th>Rows</th><th>Description</th><th>Key Columns</th></tr>
+          </thead>
+          <tbody>
+            {internalTables.map(t => (
+              <tr key={t.name}>
+                <td><code>{t.name}</code></td>
+                <td style={{ fontWeight: 700 }}>{t.rows}</td>
+                <td style={{ fontSize: 12.5, color: '#64748B' }}>{t.desc}</td>
+                <td style={{ fontSize: 11.5, fontFamily: 'monospace', color: '#94A3B8' }}>{t.keys}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card">
+        <div className="card-title">External — Public APIs</div>
+        <table className="data-table">
+          <thead>
+            <tr><th>Source</th><th>Type</th><th>Used For</th></tr>
+          </thead>
+          <tbody>
+            {externalSources.map(s => (
+              <tr key={s.name}>
+                <td style={{ fontWeight: 600 }}>{s.name}</td>
+                <td><span className={`tag ${s.type.includes('fixture') ? 'tag-fix' : 'tag-ext'}`}>{s.type}</span></td>
+                <td style={{ fontSize: 12.5, color: '#64748B' }}>{s.use}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Quality Review ─────────────────────────────────────────────────────────────
+function ScoreDisplay({ score }) {
+  if (score == null) return null;
+  const cls = score >= 8 ? 'score-high' : score >= 6 ? 'score-mid' : 'score-low';
+  return (
+    <div style={{ textAlign: 'right' }}>
+      <div className={`judge-score ${cls}`}>{score}</div>
+      <div className="judge-score-label">/10</div>
+    </div>
+  );
+}
+
+function JudgeCard({ name, label, icon, result }) {
+  if (!result) {
+    return (
+      <div className="judge-card">
+        <div className="judge-header">
+          <span style={{ fontSize: 18 }}>{icon}</span>
+          <span className="judge-name">{label}</span>
+        </div>
+        <div className="judge-pending">Waiting for judge…</div>
+      </div>
+    );
+  }
+
+  if (result.error) {
+    return (
+      <div className="judge-card">
+        <div className="judge-header">
+          <span style={{ fontSize: 18 }}>{icon}</span>
+          <span className="judge-name">{label}</span>
+          <ScoreDisplay score={0} />
+        </div>
+        <div style={{ fontSize: 12, color: '#DC2626' }}>Judge error: {result.error}</div>
+      </div>
+    );
+  }
+
+  const renderList = (items, label) => items && items.length > 0 ? (
+    <div className="judge-section">
+      <div className="judge-section-label">{label}</div>
+      <ul className="judge-list">
+        {items.map((item, i) => <li key={i}>{item}</li>)}
+      </ul>
+    </div>
+  ) : null;
+
+  return (
+    <div className="judge-card">
+      <div className="judge-header">
+        <span style={{ fontSize: 18 }}>{icon}</span>
+        <span className="judge-name">{label}</span>
+        <ScoreDisplay score={result.score} />
+      </div>
+
+      {name === 'completeness' && (
+        <>
+          {renderList(result.strong_elements, 'Strong Elements')}
+          {renderList(result.missing_elements, 'Missing / Inadequate')}
+          {result.recommendation && <div className="judge-rec">→ {result.recommendation}</div>}
+        </>
+      )}
+
+      {name === 'evidence' && (
+        <>
+          {renderList(result.strongest_arguments, 'Strongest Arguments')}
+          {renderList(result.evidence_gaps, 'Evidence Gaps')}
+          {renderList(result.mac_counterarguments, 'MAC Counterarguments')}
+          {result.recommendation && <div className="judge-rec">→ {result.recommendation}</div>}
+        </>
+      )}
+
+      {name === 'tone' && (
+        <>
+          {renderList(result.well_written_sections, 'Well-Written Sections')}
+          {renderList(result.tone_issues, 'Tone Issues')}
+          {result.recommendation && <div className="judge-rec">→ {result.recommendation}</div>}
+        </>
+      )}
+
+      {name === 'threat' && (
+        <>
+          {result.threat_level && (
+            <div style={{ marginBottom: 10 }}>
+              <span className="judge-section-label">Threat Level: </span>
+              <span className={`threat-badge-inline threat-${result.threat_level?.toLowerCase()}`}>
+                {result.threat_level}
+              </span>
+              {result.escalation_needed && (
+                <span className="threat-badge-inline threat-high" style={{ marginLeft: 6 }}>Escalation Needed</span>
+              )}
+            </div>
+          )}
+          {result.restriction_risk && result.restriction_risk.length > 0 && (
+            <div className="judge-section">
+              <div className="judge-section-label">Restriction Risk Assessment</div>
+              <table className="risk-table">
+                <thead>
+                  <tr><th>ID</th><th>Rebuttal</th><th>Residual Risk</th></tr>
+                </thead>
+                <tbody>
+                  {result.restriction_risk.map((r, i) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 700 }}>{r.restriction_id}</td>
+                      <td className={`adequacy-${r.rebuttal_adequacy?.toLowerCase()}`}>{r.rebuttal_adequacy}</td>
+                      <td style={{ color: '#64748B', fontSize: 12 }}>{r.residual_risk}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {result.overall_recommendation && <div className="judge-rec">→ {result.overall_recommendation}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+
+function QualityReviewPage({ judges, status }) {
+  const judgeConfigs = [
+    { name: 'completeness', label: 'Completeness',   icon: '☑' },
+    { name: 'evidence',     label: 'Evidence Strength', icon: '⚗' },
+    { name: 'tone',         label: 'Regulatory Tone', icon: '✍' },
+    { name: 'threat',       label: 'Threat Mitigation', icon: '⚡' },
+  ];
+
+  const hasAny = Object.keys(judges).length > 0;
+  const allDone = judgeConfigs.every(j => judges[j.name]);
+
+  const avgScore = hasAny
+    ? Math.round(
+        judgeConfigs.reduce((sum, j) => sum + (judges[j.name]?.score || 0), 0) /
+        judgeConfigs.filter(j => judges[j.name]?.score != null).length * 10
+      ) / 10
+    : null;
+
+  if (status === 'idle') {
+    return (
+      <div>
+        <div className="page-header">
+          <div className="page-title">Quality Review</div>
+          <div className="page-subtitle">4 LLM judges evaluate the evidence brief after generation</div>
+        </div>
+        <div className="empty">
+          <div className="empty-icon">✦</div>
+          <div className="empty-title">No quality review yet</div>
+          <div className="empty-sub">Quality judges run automatically after the evidence brief is generated in Step 6.</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div>
+          <div className="page-title">Quality Review</div>
+          <div className="page-subtitle">
+            {allDone
+              ? `All 4 judges complete — average score ${avgScore}/10`
+              : status === 'running'
+              ? `${Object.keys(judges).length}/4 judges complete — running…`
+              : `${Object.keys(judges).length}/4 judges complete`}
+          </div>
+        </div>
+        {avgScore != null && (
+          <div style={{ textAlign: 'right', paddingTop: 4 }}>
+            <div style={{ fontSize: 32, fontWeight: 800, color: avgScore >= 8 ? '#16A34A' : avgScore >= 6 ? '#D97706' : '#DC2626' }}>
+              {avgScore}
+            </div>
+            <div style={{ fontSize: 11, color: '#94A3B8' }}>avg score /10</div>
+          </div>
+        )}
+      </div>
+
+      <div className="judge-grid">
+        {judgeConfigs.map(j => (
+          <JudgeCard key={j.name} name={j.name} label={j.label} icon={j.icon} result={judges[j.name]} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Settings ───────────────────────────────────────────────────────────────────
+function SettingsPage({ lcdId, setLcdId, macDirector, setMacDirector }) {
+  return (
+    <div>
+      <div className="page-header">
+        <div className="page-title">Settings</div>
+        <div className="page-subtitle">Workflow configuration parameters</div>
+      </div>
+      <div className="card" style={{ maxWidth: 500 }}>
+        <div className="card-title">Analysis Configuration</div>
+        <div className="form-group">
+          <label className="form-label">LCD Identifier</label>
+          <input className="form-input" value={lcdId} onChange={e => setLcdId(e.target.value)} placeholder="MCD-A-XXXXX" />
+          <div className="form-hint">CMS Local Coverage Determination ID to analyze</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">SQL Warehouse</label>
+          <input className="form-input" value="722c356fdb9695dd" readOnly />
+          <div className="form-hint">Serverless SQL warehouse — read-only query execution</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Unity Catalog Schema</label>
+          <input className="form-input" value="siebenlist_catalog.coverpath_demo" readOnly />
+          <div className="form-hint">5 Delta tables with synthetic trial and registry data</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Foundation Model</label>
+          <input className="form-input" value="databricks-claude-sonnet-4-6" readOnly />
+          <div className="form-hint">Served via Databricks Model Serving — no external API key required</div>
+        </div>
+      </div>
+
+      <div className="card" style={{ maxWidth: 500 }}>
+        <div className="card-title">MAC Medical Director Contact</div>
+        <div style={{ fontSize: 12.5, color: '#64748B', marginBottom: 14 }}>
+          Contact information for the CGS Administrators Medical Director. When provided, this is included in the formal submission header.
+        </div>
+        <div className="form-group">
+          <label className="form-label">Medical Director Name</label>
+          <input
+            className="form-input"
+            value={macDirector.name}
+            onChange={e => setMacDirector(p => ({ ...p, name: e.target.value }))}
+            placeholder="e.g. Dr. Jane Smith, MD"
+          />
+          <div className="form-hint">Full name and credentials</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Phone</label>
+          <input
+            className="form-input"
+            value={macDirector.phone}
+            onChange={e => setMacDirector(p => ({ ...p, phone: e.target.value }))}
+            placeholder="e.g. (615) 555-0100"
+          />
+          <div className="form-hint">Direct line for pre-submission inquiry</div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Email</label>
+          <input
+            className="form-input"
+            value={macDirector.email}
+            onChange={e => setMacDirector(p => ({ ...p, email: e.target.value }))}
+            placeholder="e.g. meddir@cgsadmin.com"
+          />
+          <div className="form-hint">Preferred channel for formal written inquiry</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── App root ───────────────────────────────────────────────────────────────────
+function App() {
+  const [page, setPage]           = useState('dashboard');
+  const [lcdId, setLcdId]         = useState('MCD-A-XXXXX');
+  const [macDirector, setMacDirector] = useState({ name: '', phone: '', email: '' });
+  const prevStatus                = useRef('idle');
+  const { status, steps, traces, judges, extractedData, lcdLoaded, brief, threatStatus, runWorkflow, reset, markCounsel } = useWorkflow();
+
+  useEffect(() => {
+    if (prevStatus.current === 'idle' && status === 'running') {
+      setPage('workflow');
+    }
+    if (prevStatus.current === 'running' && status === 'done') {
+      setTimeout(() => setPage('quality'), 900);
+    }
+    prevStatus.current = status;
+  }, [status]);
+
+  const caseContext = {
+    mac_director_name:  macDirector.name  || undefined,
+    mac_director_phone: macDirector.phone || undefined,
+    mac_director_email: macDirector.email || undefined,
+  };
+
+  const pageTitle = {
+    dashboard: 'Dashboard',
+    workflow:  'Workflow',
+    brief:     'Evidence Brief',
+    quality:   'Quality Review',
+    data:      'Data Sources',
+    settings:  'Settings',
+  };
+
+  return (
+    <>
+      <Sidebar page={page} setPage={setPage} threatStatus={threatStatus} />
+      <div className="main">
+        <div className="topbar">
+          <div className="topbar-title">{pageTitle[page]}</div>
+          {status !== 'idle' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#94A3B8' }}>
+              <span className={`status-dot sd-${status}`} />
+              {status === 'running'
+                ? `${traces.length} tool calls`
+                : status === 'done'
+                ? `Done · ${traces.length} calls`
+                : 'Error'}
+            </div>
+          )}
+        </div>
+        <div className="content">
+          {page === 'dashboard' && <DashboardPage status={status} runWorkflow={() => runWorkflow(lcdId, caseContext)} reset={reset} lcdId={lcdId} extractedData={extractedData} lcdLoaded={lcdLoaded} />}
+          {page === 'workflow'  && <WorkflowPage  status={status} steps={steps} traces={traces} brief={brief} />}
+          {page === 'brief'     && <BriefPage     brief={brief} status={status} markCounsel={markCounsel} threatStatus={threatStatus} />}
+          {page === 'quality'   && <QualityReviewPage judges={judges} status={status} />}
+          {page === 'data'      && <DataSourcesPage />}
+          {page === 'settings'  && <SettingsPage lcdId={lcdId} setLcdId={setLcdId} macDirector={macDirector} setMacDirector={setMacDirector} />}
+        </div>
+      </div>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

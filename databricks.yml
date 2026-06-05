@@ -1,0 +1,42 @@
+bundle:
+  name: coverpath
+
+variables:
+  warehouse_id:
+    description: "Serverless SQL Warehouse ID (found in Databricks UI → SQL Warehouses → Connection Details)"
+  catalog:
+    description: "Unity Catalog catalog name for CoverPath demo tables"
+    default: coverpath_demo
+  schema:
+    description: "Unity Catalog schema name for CoverPath demo tables"
+    default: coverpath_demo
+  model:
+    description: "Databricks-hosted LLM serving endpoint name"
+    default: databricks-claude-sonnet-4-6
+
+targets:
+  dev:
+    default: true
+
+resources:
+  apps:
+    coverpath_app:
+      name: "coverpath"
+      description: "CoverPath — Rare Disease Coverage Intelligence"
+      source_code_path: ./app
+      config:
+        env:
+          - name: COVERPATH_WAREHOUSE_ID
+            value: ${var.warehouse_id}
+          - name: COVERPATH_CATALOG
+            value: ${var.catalog}
+          - name: COVERPATH_SCHEMA
+            value: ${var.schema}
+          - name: COVERPATH_MODEL
+            value: ${var.model}
+      resources:
+        - name: coverpath-warehouse
+          description: "Serverless SQL Warehouse for evidence queries"
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: "CAN_USE"
