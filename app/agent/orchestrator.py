@@ -412,7 +412,7 @@ EVIDENCE MAPPING SUMMARY:
         def run_judge(name: str, system_prompt: str):
             t0 = time.time()
             try:
-                raw = self._llm(system_prompt, brief_context, max_tokens=1500)
+                raw = self._llm(system_prompt, brief_context, max_tokens=3000)
                 elapsed = int((time.time() - t0) * 1000)
                 clean = raw.strip()
                 if clean.startswith("```"):
