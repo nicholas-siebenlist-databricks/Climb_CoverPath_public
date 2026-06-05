@@ -95,17 +95,17 @@ This creates 5 synthetic Unity Catalog tables with ~1,100 rows total, representi
 
 ```bash
 cd ..  # repo root
-databricks bundle deploy \
-    -t dev \
-    --var="warehouse_id=<YOUR_WAREHOUSE_ID>" \
-    --var="catalog=<YOUR_CATALOG>" \
-    --var="schema=coverpath_demo"
-
-databricks apps deploy coverpath \
-    --source-code-path app/
+BUNDLE_VAR_warehouse_id=<YOUR_WAREHOUSE_ID> \
+BUNDLE_VAR_catalog=<YOUR_CATALOG> \
+make deploy
 ```
 
-**Bundle variables:**
+`make deploy` does three things in sequence:
+1. Runs `databricks bundle validate` to resolve variables, then renders `app/app.yaml` from the template
+2. Runs `databricks bundle deploy` to sync the app code and register the resource
+3. Runs `databricks apps deploy` with the correct workspace path (derived automatically)
+
+**Bundle variables** — set as `BUNDLE_VAR_<name>=value` env vars or override in `databricks.yml` under `targets.dev.variables`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -114,7 +114,12 @@ databricks apps deploy coverpath \
 | `schema` | `coverpath_demo` | UC schema name |
 | `model` | `databricks-claude-sonnet-4-6` | LLM serving endpoint |
 
-You can also set defaults in `databricks.yml` under `targets.dev.variables` to avoid passing `--var` on every deploy.
+**Makefile variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROFILE` | `prod` | Databricks CLI profile |
+| `TARGET` | `dev` | Bundle target |
 
 ### 5. Open the app
 
