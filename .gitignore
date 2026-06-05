@@ -20,6 +20,7 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+.serena/
 *.swp
 *.swo
 

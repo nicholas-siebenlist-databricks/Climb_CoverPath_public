@@ -2,13 +2,12 @@ command:
   - sh
   - -c
   - "exec gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 1 --threads 8 --timeout 120 app:app"
-
 env:
   - name: COVERPATH_WAREHOUSE_ID
-    value: "${bundle.var.warehouse_id}"
+    valueFrom: coverpath-warehouse
   - name: COVERPATH_CATALOG
-    value: "${bundle.var.catalog}"
+    value: "coverpath_demo"
   - name: COVERPATH_SCHEMA
-    value: "${bundle.var.schema}"
+    value: "coverpath_demo"
   - name: COVERPATH_MODEL
-    value: "${bundle.var.model}"
+    value: "databricks-claude-sonnet-4-6"
