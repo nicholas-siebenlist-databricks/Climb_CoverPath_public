@@ -174,14 +174,23 @@ class WorkflowOrchestrator:
                     result = future.result()
                     elapsed = int((time.time() - t0) * 1000)
                     results[name] = result
+                    def _pubmed_summary(r):
+                        ok = [p for p in r if p.get("title") and not p.get("error")]
+                        titles = "; ".join(p["title"][:60] for p in ok)
+                        status = f"{len(ok)}/{len(r)} fetched"
+                        return f"{status} — {titles}" if titles else f"{status} (no titles returned)"
+
                     summary_fns = {
                         "cms_precedent": lambda r: f"{len(r)} prior LCDs found (L34007, L34314)",
                         "openfda_label":  lambda r: f"Label retrieved for {r.get('brand_name', 'drug')}",
                         "clinicaltrials": lambda r: f"Trial record: {r.get('nct_id', '')}",
-                        "pubmed":         lambda r: f"{len(r)} publications fetched",
+                        "pubmed":         _pubmed_summary,
                     }
                     summary = summary_fns[name](result)
-                    self._trace(tool_names[name], task_inputs[name], summary, "ok", elapsed)
+                    # Warn if pubmed returned empty titles (silent API failure)
+                    ok_count = len([p for p in result if p.get("title")]) if name == "pubmed" else None
+                    status = "warn" if (name == "pubmed" and ok_count == 0) else "ok"
+                    self._trace(tool_names[name], task_inputs[name], summary, status, elapsed)
                 except Exception as e:
                     elapsed = int((time.time() - t0) * 1000)
                     results[name] = {"error": str(e)}
@@ -252,7 +261,7 @@ EXTERNAL EVIDENCE:
         context = re.sub(r'\d{8,}', '[NUM]', context)
 
         t0 = time.time()
-        raw = self._llm(STEP4_SYSTEM, context, max_tokens=3000)
+        raw = self._llm(STEP4_SYSTEM, context, max_tokens=6000)
         elapsed = int((time.time() - t0) * 1000)
 
         try:
