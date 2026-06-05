@@ -105,6 +105,14 @@ make deploy
 2. Runs `databricks bundle deploy` to sync the app code and register the resource
 3. Runs `databricks apps deploy` with the correct workspace path (derived automatically)
 
+> **First deploy only:** `make deploy` assumes the app compute is already running. After the very first `bundle deploy`, start the compute and wait for it to become active before proceeding:
+> ```bash
+> databricks apps start coverpath --profile <PROFILE>
+> # wait ~60s, then verify:
+> databricks apps get coverpath --profile <PROFILE> --output json | python -c "import sys,json; d=json.load(sys.stdin); print(d['compute_status']['state'])"
+> # re-run make deploy once state is ACTIVE
+> ```
+
 **Bundle variables** — set as `BUNDLE_VAR_<name>=value` env vars or override in `databricks.yml` under `targets.dev.variables`:
 
 | Variable | Default | Description |
