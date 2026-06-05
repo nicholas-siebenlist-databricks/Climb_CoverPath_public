@@ -18,22 +18,17 @@ targets:
   dev:
     default: true
 
+  4ck:
+    workspace:
+      host: https://fevm-serverless-stable-4ck9qn.cloud.databricks.com
+      profile: amneal
+
 resources:
   apps:
     coverpath_app:
       name: "coverpath"
       description: "CoverPath — Rare Disease Coverage Intelligence"
       source_code_path: ./app
-      config:
-        env:
-          - name: COVERPATH_WAREHOUSE_ID
-            value: ${var.warehouse_id}
-          - name: COVERPATH_CATALOG
-            value: ${var.catalog}
-          - name: COVERPATH_SCHEMA
-            value: ${var.schema}
-          - name: COVERPATH_MODEL
-            value: ${var.model}
       resources:
         - name: coverpath-warehouse
           description: "Serverless SQL Warehouse for evidence queries"

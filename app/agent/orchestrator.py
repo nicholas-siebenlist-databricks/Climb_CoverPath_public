@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -226,19 +227,30 @@ class WorkflowOrchestrator:
     def step4_evidence_mapping(self, restrictions_data: dict, external: dict, internal: dict) -> dict:
         self.on_step(3, "running", "Mapping evidence to each restriction…")
 
+        internal_rows = json.dumps(
+            {k: v.get('rows', [])[:20] for k, v in internal.items() if 'error' not in v},
+            indent=2,
+        )
+        # Strip 8+ digit sequences to avoid Presidio bank-account false positives
+        # (no word boundaries — catches digits embedded in alphanumeric strings too)
+        internal_rows = re.sub(r'\d{8,}', '[NUM]', internal_rows)
+
         context = f"""
 LCD RESTRICTIONS:
 {json.dumps(restrictions_data.get('restrictions', []), indent=2)}
 
 INTERNAL EVIDENCE (SQL Query Results):
-{json.dumps({k: v.get('rows', [])[:20] for k, v in internal.items() if 'error' not in v}, indent=2)}
+{internal_rows}
 
 EXTERNAL EVIDENCE:
 - CMS Precedent LCDs: {json.dumps(external.get('cms_precedent', []), indent=2)}
 - openFDA (class analogue): indications={external.get('openfda_label', {}).get('indications_and_usage', '')[:500]}
 - ClinicalTrials.gov NCT01844856: {external.get('clinicaltrials', {}).get('eligibility_criteria', '')[:500]}
-- PubMed: {json.dumps([{'pmid': p.get('pmid'), 'title': p.get('title')} for p in external.get('pubmed', [])], indent=2)}
+- PubMed Publications: {json.dumps([{'citation': f"{p.get('authors', ['?'])[0]} et al. {p.get('journal','')[:40]} ({p.get('pub_date','')[:4]})", 'title': p.get('title','')} for p in external.get('pubmed', [])], indent=2)}
 """
+        # Also strip 8+ digit sequences anywhere else in context (eligibility criteria, etc.)
+        context = re.sub(r'\d{8,}', '[NUM]', context)
+
         t0 = time.time()
         raw = self._llm(STEP4_SYSTEM, context, max_tokens=3000)
         elapsed = int((time.time() - t0) * 1000)
@@ -254,11 +266,27 @@ EXTERNAL EVIDENCE:
             mapping = {"restriction_rebuttals": [], "raw": raw}
 
         restriction_count = len(mapping.get("restriction_rebuttals", []))
+
+        # Log guardrail debug info when 0 rebuttals returned
+        if restriction_count == 0:
+            try:
+                raw_json = json.loads(raw.strip())
+                if 'input_guardrail' in raw_json:
+                    anon = str(raw_json['input_guardrail'][0].get('anonymized_input', ''))[:1000]
+                    self._trace("guardrail_debug", "PII guardrail fired in step4",
+                                f"anonymized: {anon}", "warn", 0)
+                else:
+                    self._trace("guardrail_debug", "Step4 unexpected JSON (no rebuttals)",
+                                raw[:500], "warn", 0)
+            except Exception:
+                self._trace("guardrail_debug", "Step4 non-JSON response",
+                            raw[:500], "warn", 0)
+
         self._trace(
             "llm_evidence_mapping",
             f"Map {len(restrictions_data.get('restrictions', []))} restrictions",
             f"{restriction_count} rebuttals structured",
-            "ok", elapsed,
+            "ok" if restriction_count > 0 else "warn", elapsed,
         )
         self.on_step(3, "complete", f"{restriction_count} restriction-evidence mappings built")
         return mapping
@@ -320,9 +348,9 @@ EXTERNAL CITATIONS:
 - CMS LCD L34314 (Palmetto GBA) — outpatient initiation permitted for C5 inhibitor class
 - openFDA Soliris label — first-line FDA approval, no step therapy in indication
 - NCT01844856 (RECOVER, eculizumab aHUS) — no plasma exchange prerequisite in eligibility
-- PMID 22553501 — Legendre et al., NEJM 2013 (pivotal eculizumab aHUS trial)
-- PMID 25908597 — Fakhouri et al., 2015 (real-world outcomes, outpatient setting)
-- PMID 31395980 — Rondeau et al., 5-year eculizumab renal registry safety data
+- Legendre et al. NEJM 2013 (pivotal eculizumab aHUS trial; eref:Legendre-NEJM-2013)
+- Fakhouri et al. AJKD 2016 (real-world outcomes, outpatient setting; eref:Fakhouri-AJKD-2016)
+- Rondeau et al. KIR 2019 (5-year eculizumab renal registry safety data; eref:Rondeau-KIR-2019)
 
 Write the full evidence brief now."""
 
@@ -352,8 +380,9 @@ Write the full evidence brief now."""
     def step6_quality_review(self, brief: str, restrictions_data: dict, mapping: dict) -> dict:
         self.on_step(5, "running", "Running 4 quality judges in parallel…")
 
+        sanitized_brief = re.sub(r'PMID\s+(\d+)', r'PMID-\1', brief[:8000])
         brief_context = f"""BRIEF TO EVALUATE:
-{brief[:8000]}
+{sanitized_brief}
 
 RESTRICTIONS:
 {json.dumps(restrictions_data.get('restrictions', []), indent=2)}

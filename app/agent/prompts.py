@@ -81,7 +81,7 @@ Document structure:
 3. **Response to Restriction [N]: [Type]** (one section per restriction, in order)
    - Rebuttal narrative (3–5 paragraphs)
    - Internal evidence cited inline as [Trial Data] or [Registry Data]
-   - External evidence cited inline as [openFDA], [PMID XXXXXXX], [LCD ID], etc.
+   - External evidence cited inline as [openFDA], [eref:Author-Journal-YYYY], [LCD ID], etc.
 4. **ICD-10-CM Coding Recommendations** — markdown table of recommended supported codes and any manufacturer challenges to excluded codes
 5. **Cross-MAC Comparison** — brief paragraph noting how other MACs have addressed this drug class (cite LCD IDs); highlight where CGS diverges from national precedent
 6. **Health Economic Argument** — 1 paragraph on cost offset: avoided hospitalizations and dialysis avoidance for patients with sustained TMA response at 12 months, sourced from registry_outcomes data; frame as beneficiary and program savings
