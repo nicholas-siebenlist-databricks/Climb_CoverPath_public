@@ -581,7 +581,7 @@ _FIXTURE_RESTRICTIONS = {
     "lcd_id": "MCD-A-XXXXX",
     "mac_name": "CGS Administrators LLC",
     "mac_jurisdiction": "MO, KS, NE, IA",
-    "drug_name": "Suvaxilumab",
+    "drug_name": "Ultomiris",
     "effective_date": "TBD",
     "restrictions": [
         {
