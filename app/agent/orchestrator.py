@@ -165,12 +165,15 @@ class WorkflowOrchestrator:
         self.on_step(1, "running", "Launching 4 parallel external queries…")
 
         drug_name = restrictions_data.get("drug_name", "")
-        pubmed_query = f"{drug_name} clinical trial outcomes safety"
+        # LLM may extract the full generic suffix, e.g. "Ultomiris (ravulizumab-cwvz)".
+        # APIs index by brand name only — strip anything in parentheses for searches.
+        search_name = re.sub(r'\s*\(.*', '', drug_name).strip() or drug_name
+        pubmed_query = f"{search_name} atypical hemolytic uremic syndrome clinical trial"
 
         tasks = {
-            "cms_precedent": lambda: cms_search_precedent(drug_name),
-            "openfda_label":  lambda: openfda_get_label(drug_name),
-            "clinicaltrials": lambda: clinicaltrials_find_for_drug(drug_name),
+            "cms_precedent": lambda: cms_search_precedent(search_name),
+            "openfda_label":  lambda: openfda_get_label(search_name),
+            "clinicaltrials": lambda: clinicaltrials_find_for_drug(search_name),
             "pubmed":         lambda: pubmed_search(pubmed_query),
         }
 
@@ -181,9 +184,9 @@ class WorkflowOrchestrator:
             "pubmed":         "pubmed.search",
         }
         task_inputs = {
-            "cms_precedent": f'search_precedent(drug_name={drug_name!r})',
-            "openfda_label":  f'get_label(brand_name={drug_name!r})',
-            "clinicaltrials": f'find_for_drug(drug_name={drug_name!r})',
+            "cms_precedent": f'search_precedent(drug_name={search_name!r})',
+            "openfda_label":  f'get_label(brand_name={search_name!r})',
+            "clinicaltrials": f'find_for_drug(drug_name={search_name!r})',
             "pubmed":         f'search(query={pubmed_query!r})',
         }
 
