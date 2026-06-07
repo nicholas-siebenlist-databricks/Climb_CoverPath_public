@@ -25,9 +25,10 @@ from agent.tools import (
 
 MODEL = os.environ.get("COVERPATH_MODEL", "databricks-claude-sonnet-4-6")
 
-# Hard ceiling for this endpoint — applies to every generation step.
-# The model stops when it finishes; the limit only bites on truncation.
+# JSON generation steps (extraction, mapping, judges): large limit to avoid truncation.
 _OUTPUT_LIMIT = 50000
+# Prose brief (step 5): capped separately — 50K tokens streams for 15+ minutes.
+_BRIEF_TOKEN_LIMIT = 8192
 
 # Regex to strip ```json ... ``` or ``` ... ``` code fences from LLM output
 _FENCE_RE = re.compile(r'^```(?:json)?\s*\n?(.*?)(?:\n?```\s*)?$', re.DOTALL)
@@ -416,7 +417,7 @@ Write the full evidence brief now."""
         t0 = time.time()
         brief_chunks = []
         try:
-            for chunk in self._llm_stream(STEP5_SYSTEM, context, max_tokens=_OUTPUT_LIMIT):
+            for chunk in self._llm_stream(STEP5_SYSTEM, context, max_tokens=_BRIEF_TOKEN_LIMIT):
                 brief_chunks.append(chunk)
                 if on_chunk:
                     on_chunk(chunk)

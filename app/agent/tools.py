@@ -8,6 +8,15 @@ WAREHOUSE_ID = os.environ.get("COVERPATH_WAREHOUSE_ID", "")
 CATALOG = os.environ.get("COVERPATH_CATALOG", "coverpath_demo")
 SCHEMA = os.environ.get("COVERPATH_SCHEMA", "coverpath_demo")
 
+_wc = None
+
+def _workspace_client():
+    global _wc
+    if _wc is None:
+        from databricks.sdk import WorkspaceClient
+        _wc = WorkspaceClient()
+    return _wc
+
 
 def _retry(fn, retries=3, backoff=1.0):
     for attempt in range(retries):
@@ -73,8 +82,7 @@ _OPENFDA_MCP_PATH = "/api/2.0/mcp/external/climb_openFDA"
 
 def _mcp_openfda(tool_name: str, arguments: dict) -> dict:
     """Call the climb_openFDA MCP server on the current workspace."""
-    from databricks.sdk import WorkspaceClient
-    w = WorkspaceClient()
+    w = _workspace_client()
     host = w.config.host.rstrip("/")
     token = w.config.authenticate().get("Authorization", "").replace("Bearer ", "")
     resp = requests.post(
@@ -150,8 +158,7 @@ _CLINTRIALS_MCP_PATH = "/api/2.0/mcp/external/climb_clintrials_v2"
 
 def _mcp_clintrials(tool_name: str, arguments: dict) -> dict:
     """Call the climb_clintrials_v2 MCP server on the current workspace."""
-    from databricks.sdk import WorkspaceClient
-    w = WorkspaceClient()
+    w = _workspace_client()
     host = w.config.host.rstrip("/")
     token = w.config.authenticate().get("Authorization", "").replace("Bearer ", "")
     resp = requests.post(
@@ -271,8 +278,7 @@ _PUBMED_MCP_PATH = "/api/2.0/mcp/external/climb_pubmed"
 
 def _mcp_pubmed(tool_name: str, arguments: dict) -> dict:
     """Call the climb_pubmed MCP server on the current workspace."""
-    from databricks.sdk import WorkspaceClient
-    w = WorkspaceClient()
+    w = _workspace_client()
     host = w.config.host.rstrip("/")
     token = w.config.authenticate().get("Authorization", "").replace("Bearer ", "")
     resp = requests.post(
@@ -382,8 +388,7 @@ def databricks_sql_query(sql: str) -> dict:
     if not sql.strip().upper().startswith("SELECT"):
         raise ValueError("Only SELECT statements are permitted.")
 
-    from databricks.sdk import WorkspaceClient
-    w = WorkspaceClient()
+    w = _workspace_client()
 
     def _call():
         resp = w.statement_execution.execute_statement(
