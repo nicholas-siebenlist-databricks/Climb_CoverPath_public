@@ -211,10 +211,57 @@ def clinicaltrials_find_for_drug(drug_name: str) -> dict:
 
 # ── PubMed ────────────────────────────────────────────────────────────────────
 
-def pubmed_fetch(pmids: list) -> list:
-    """Fetch abstracts from PubMed E-utilities for the given PMID list."""
+_PUBMED_MCP_PATH = "/api/2.0/mcp/external/climb_pubmed"
 
-    def _fetch_abstract(pmid):
+
+def _mcp_pubmed(tool_name: str, arguments: dict) -> dict:
+    """Call the climb_pubmed MCP server on the current workspace."""
+    from databricks.sdk import WorkspaceClient
+    w = WorkspaceClient()
+    host = w.config.host.rstrip("/")
+    token = w.config.authenticate().get("Authorization", "").replace("Bearer ", "")
+    resp = requests.post(
+        f"{host}{_PUBMED_MCP_PATH}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+              "params": {"name": tool_name, "arguments": arguments}},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"MCP error: {data['error']}")
+    result = data["result"]
+    if result.get("isError"):
+        raise RuntimeError(result["content"][0]["text"])
+    return result["structuredContent"]
+
+
+def _normalize_pubmed_article(article: dict, source: str) -> dict:
+    """Normalize a PubMed article from MCP or REST into a consistent shape."""
+    return {
+        "pmid": article.get("pmid", ""),
+        "title": article.get("title", ""),
+        "abstract": article.get("abstract", ""),
+        "authors": article.get("authors", [])[:3],
+        "journal": article.get("journal", article.get("fulljournalname", article.get("source", ""))),
+        "pub_date": article.get("pub_date", article.get("pubdate", "")),
+        "source": source,
+    }
+
+
+def pubmed_fetch(pmids: list) -> list:
+    """Fetch article metadata for a list of PMIDs — MCP-first, NCBI REST fallback."""
+
+    def _fetch_via_mcp(pmid):
+        article = _mcp_pubmed("pubmed_get_article", {"pmid": pmid})
+        return _normalize_pubmed_article(article, f"climb_pubmed MCP PMID {pmid}")
+
+    def _fetch_via_rest(pmid):
         url = (
             f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
             f"?db=pubmed&id={pmid}&retmode=json"
@@ -222,32 +269,36 @@ def pubmed_fetch(pmids: list) -> list:
         resp = requests.get(url, timeout=15)
         resp.raise_for_status()
         data = resp.json()
-        article = data.get("result", {}).get(pmid, {})
-        return {
-            "pmid": pmid,
-            "title": article.get("title", ""),
-            "authors": [a.get("name", "") for a in article.get("authors", [])[:3]],
-            "journal": article.get("fulljournalname", article.get("source", "")),
-            "pub_date": article.get("pubdate", ""),
-            "source": f"PubMed PMID {pmid}",
-        }
+        article = data.get("result", {}).get(str(pmid), {})
+        return _normalize_pubmed_article(article, f"PubMed NCBI REST PMID {pmid}")
 
     results = []
     for pmid in pmids:
+        def _call(p=pmid):
+            try:
+                return _fetch_via_mcp(p)
+            except Exception:
+                time.sleep(0.35)  # NCBI courtesy rate limit
+                return _fetch_via_rest(p)
         try:
-            results.append(_retry(lambda p=pmid: _fetch_abstract(p)))
-            time.sleep(0.35)  # NCBI courtesy rate limit
+            results.append(_retry(_call))
         except Exception as e:
             results.append({"pmid": pmid, "error": str(e), "source": f"PubMed PMID {pmid}"})
     return results
 
 
 def pubmed_search(query: str, max_results: int = 3) -> list:
-    """Search PubMed by query string and return abstracts.
+    """Search PubMed by query string — MCP-first, NCBI REST fallback."""
 
-    Uses NCBI esearch to find relevant PMIDs, then pubmed_fetch for abstracts.
-    """
-    def _call():
+    def _search_via_mcp():
+        data = _mcp_pubmed("pubmed_search_articles", {
+            "query": query,
+            "max_results": max_results,
+        })
+        articles = data.get("result", data) if isinstance(data, dict) else data
+        return [_normalize_pubmed_article(a, "climb_pubmed MCP") for a in articles]
+
+    def _search_via_rest():
         url = (
             f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
             f"?db=pubmed&term={requests.utils.quote(query)}"
@@ -259,6 +310,13 @@ def pubmed_search(query: str, max_results: int = 3) -> list:
         if not pmids:
             return []
         return pubmed_fetch(pmids)
+
+    def _call():
+        try:
+            return _search_via_mcp()
+        except Exception:
+            return _search_via_rest()
+
     return _retry(_call)
 
 
