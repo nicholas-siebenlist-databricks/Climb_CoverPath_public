@@ -203,7 +203,7 @@ class WorkflowOrchestrator:
                     summary_fns = {
                         "cms_precedent": lambda r: f"{len(r)} prior LCDs found (L34007, L34314)",
                         "openfda_label":  lambda r: f"Label retrieved for {r.get('brand_name', 'drug')}",
-                        "clinicaltrials": lambda r: f"Trial record: {r.get('nct_id', '')}",
+                        "clinicaltrials": lambda r: f"Trial record: {r.get('nct_id', '')} via {r.get('source', '?')}",
                         "pubmed":         _pubmed_summary,
                     }
                     summary = summary_fns[name](result)

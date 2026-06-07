@@ -90,29 +90,85 @@ def openfda_get_label(brand_name: str = "Soliris") -> dict:
 
 # ── ClinicalTrials.gov ────────────────────────────────────────────────────────
 
+_CLINTRIALS_MCP_PATH = "/api/2.0/mcp/external/climb_clintrials_v2"
+
+
+def _mcp_clintrials(tool_name: str, arguments: dict) -> dict:
+    """Call the climb_clintrials_v2 MCP server on the current workspace."""
+    from databricks.sdk import WorkspaceClient
+    w = WorkspaceClient()
+    host = w.config.host.rstrip("/")
+    token = w.config.authenticate().get("Authorization", "").replace("Bearer ", "")
+    resp = requests.post(
+        f"{host}{_CLINTRIALS_MCP_PATH}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+              "params": {"name": tool_name, "arguments": arguments}},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"MCP error: {data['error']}")
+    return data["result"]["structuredContent"]
+
+
+def _clintrials_via_mcp(nct_id: str) -> dict:
+    """Fetch trial metadata + outcomes via the internal MCP server."""
+    trial = _mcp_clintrials("clinicaltrials_get_trial", {"nct_id": nct_id})
+    outcomes = _mcp_clintrials("clinicaltrials_get_trial_outcomes", {"nct_id": nct_id})
+    return {
+        "nct_id": trial["nct_id"],
+        "title": trial["title"],
+        "status": trial.get("status", ""),
+        "phase": trial.get("phase", ""),
+        "conditions": trial.get("conditions", []),
+        "interventions": [i["name"] for i in trial.get("interventions", [])],
+        "enrollment": trial.get("enrollment"),
+        "start_date": trial.get("start_date"),
+        "completion_date": trial.get("completion_date"),
+        "sponsors": trial.get("sponsors", []),
+        # MCP doesn't expose eligibility_criteria; brief_summary is the closest proxy
+        "eligibility_criteria": trial.get("brief_summary", "")[:1500],
+        "primary_outcomes": [o["measure"] for o in outcomes.get("primary", [])[:3]],
+        "source": "climb_clintrials_v2 MCP",
+    }
+
+
+def _clintrials_via_rest(nct_id: str) -> dict:
+    """Fetch trial metadata from the public ClinicalTrials.gov v2 REST API (fallback)."""
+    url = f"https://clinicaltrials.gov/api/v2/studies/{nct_id}"
+    resp = requests.get(url, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    protocol = data.get("protocolSection", {})
+    ident = protocol.get("identificationModule", {})
+    design = protocol.get("designModule", {})
+    eligibility = protocol.get("eligibilityModule", {})
+    outcomes = protocol.get("outcomesModule", {})
+    return {
+        "nct_id": nct_id,
+        "title": ident.get("officialTitle", ident.get("briefTitle", "")),
+        "status": design.get("studyType", ""),
+        "phase": str(design.get("phases", [])),
+        "eligibility_criteria": eligibility.get("eligibilityCriteria", "")[:1500],
+        "primary_outcomes": [o.get("measure", "") for o in outcomes.get("primaryOutcomes", [])[:3]],
+        "enrollment": design.get("enrollmentInfo", {}).get("count"),
+        "source": "ClinicalTrials.gov v2 REST API (fallback)",
+    }
+
+
 def clinicaltrials_get_study(nct_id: str = "NCT01844856") -> dict:
-    """Fetch study record from ClinicalTrials.gov v2 API."""
+    """Fetch study record — MCP-first with automatic fallback to public REST API."""
     def _call():
-        url = f"https://clinicaltrials.gov/api/v2/studies/{nct_id}"
-        resp = requests.get(url, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        protocol = data.get("protocolSection", {})
-        ident = protocol.get("identificationModule", {})
-        design = protocol.get("designModule", {})
-        eligibility = protocol.get("eligibilityModule", {})
-        outcomes = protocol.get("outcomesModule", {})
-        return {
-            "nct_id": nct_id,
-            "title": ident.get("officialTitle", ident.get("briefTitle", "")),
-            "status": design.get("studyType", ""),
-            "phase": str(design.get("phases", [])),
-            "eligibility_criteria": eligibility.get("eligibilityCriteria", "")[:1500],
-            "primary_outcomes": [o.get("measure", "") for o in outcomes.get("primaryOutcomes", [])[:3]],
-            "enrollment": design.get("enrollmentInfo", {}).get("count"),
-            "source": "ClinicalTrials.gov v2 API",
-            "note": "RECOVER trial (NCT01844856) — pivotal eculizumab aHUS study used as class precedent.",
-        }
+        try:
+            return _clintrials_via_mcp(nct_id)
+        except Exception:
+            return _clintrials_via_rest(nct_id)
     return _retry(_call)
 
 
