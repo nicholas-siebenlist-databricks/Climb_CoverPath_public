@@ -17,8 +17,8 @@ from agent.tools import (
     cms_fetch_lcd,
     cms_search_precedent,
     openfda_get_label,
-    clinicaltrials_get_study,
-    pubmed_fetch,
+    clinicaltrials_find_for_drug,
+    pubmed_search,
     databricks_sql_query,
     QUERIES,
 )
@@ -161,27 +161,30 @@ class WorkflowOrchestrator:
 
     # ── Step 2: External Evidence Sweep ───────────────────────────────────────
 
-    def step2_external_evidence(self, restrictions: list) -> dict:
+    def step2_external_evidence(self, restrictions_data: dict) -> dict:
         self.on_step(1, "running", "Launching 4 parallel external queries…")
 
+        drug_name = restrictions_data.get("drug_name", "")
+        pubmed_query = f"{drug_name} clinical trial outcomes safety"
+
         tasks = {
-            "cms_precedent": lambda: cms_search_precedent("C5 complement inhibitor"),
-            "openfda_label":  lambda: openfda_get_label("Soliris"),
-            "clinicaltrials": lambda: clinicaltrials_get_study("NCT01844856"),
-            "pubmed":         lambda: pubmed_fetch(),
+            "cms_precedent": lambda: cms_search_precedent(drug_name),
+            "openfda_label":  lambda: openfda_get_label(drug_name),
+            "clinicaltrials": lambda: clinicaltrials_find_for_drug(drug_name),
+            "pubmed":         lambda: pubmed_search(pubmed_query),
         }
 
         tool_names = {
             "cms_precedent": "cms_coverage_database.search_precedent",
             "openfda_label":  "openfda_drug_label.get_label",
-            "clinicaltrials": "clinicaltrials_gov.get_study",
-            "pubmed":         "pubmed.fetch",
+            "clinicaltrials": "clinicaltrials_gov.find_for_drug",
+            "pubmed":         "pubmed.search",
         }
         task_inputs = {
-            "cms_precedent": 'search_precedent(drug_class="C5 complement inhibitor")',
-            "openfda_label":  'get_label(brand_name="Soliris")',
-            "clinicaltrials": 'get_study(nct_id="NCT01844856")',
-            "pubmed":         'fetch(pmids=["22553501","25908597","31395980"])',
+            "cms_precedent": f'search_precedent(drug_name={drug_name!r})',
+            "openfda_label":  f'get_label(brand_name={drug_name!r})',
+            "clinicaltrials": f'find_for_drug(drug_name={drug_name!r})',
+            "pubmed":         f'search(query={pubmed_query!r})',
         }
 
         results = {}
@@ -194,6 +197,7 @@ class WorkflowOrchestrator:
                     result = future.result()
                     elapsed = int((time.time() - t0) * 1000)
                     results[name] = result
+
                     def _pubmed_summary(r):
                         ok = [p for p in r if p.get("title") and not p.get("error")]
                         titles = "; ".join(p["title"][:60] for p in ok)
@@ -201,13 +205,12 @@ class WorkflowOrchestrator:
                         return f"{status} — {titles}" if titles else f"{status} (no titles returned)"
 
                     summary_fns = {
-                        "cms_precedent": lambda r: f"{len(r)} prior LCDs found (L34007, L34314)",
-                        "openfda_label":  lambda r: f"Label retrieved for {r.get('brand_name', 'drug')}",
-                        "clinicaltrials": lambda r: f"Trial record: {r.get('nct_id', '')} via {r.get('source', '?')}",
+                        "cms_precedent": lambda r: f"{len(r)} precedent LCDs found",
+                        "openfda_label":  lambda r: f"Label retrieved for {r.get('brand_name', drug_name)}",
+                        "clinicaltrials": lambda r: f"Trial: {r.get('nct_id', 'n/a')} — {r.get('title', '')[:60]} via {r.get('source', '?')}",
                         "pubmed":         _pubmed_summary,
                     }
                     summary = summary_fns[name](result)
-                    # Warn if pubmed returned empty titles (silent API failure)
                     ok_count = len([p for p in result if p.get("title")]) if name == "pubmed" else None
                     status = "warn" if (name == "pubmed" and ok_count == 0) else "ok"
                     self._trace(tool_names[name], task_inputs[name], summary, status, elapsed)
@@ -264,6 +267,10 @@ class WorkflowOrchestrator:
         # (no word boundaries — catches digits embedded in alphanumeric strings too)
         internal_rows = re.sub(r'\d{8,}', '[NUM]', internal_rows)
 
+        ct = external.get('clinicaltrials', {})
+        ct_nct = ct.get('nct_id', 'n/a')
+        ct_eligibility = ct.get('eligibility_criteria', ct.get('brief_summary', ''))[:500]
+
         context = f"""
 LCD RESTRICTIONS:
 {json.dumps(restrictions_data.get('restrictions', []), indent=2)}
@@ -274,7 +281,7 @@ INTERNAL EVIDENCE (SQL Query Results):
 EXTERNAL EVIDENCE:
 - CMS Precedent LCDs: {json.dumps(external.get('cms_precedent', []), indent=2)}
 - openFDA (class analogue): indications={external.get('openfda_label', {}).get('indications_and_usage', '')[:500]}
-- ClinicalTrials.gov NCT01844856: {external.get('clinicaltrials', {}).get('eligibility_criteria', '')[:500]}
+- ClinicalTrials.gov {ct_nct}: {ct_eligibility}
 - PubMed Publications: {json.dumps([{'citation': f"{p.get('authors', ['?'])[0]} et al. {p.get('journal','')[:40]} ({p.get('pub_date','')[:4]})", 'title': p.get('title','')} for p in external.get('pubmed', [])], indent=2)}
 """
         # Also strip 8+ digit sequences anywhere else in context (eligibility criteria, etc.)
@@ -334,14 +341,49 @@ EXTERNAL EVIDENCE:
             mac_contact_lines.append(f"MAC Medical Director Email: {mac_md['mac_director_email']}")
         mac_contact_block = "\n".join(mac_contact_lines)
 
-        icd_supported = restrictions_data.get("icd_codes_supported", ["D59.31", "D59.39"])
-        icd_excluded = restrictions_data.get("icd_codes_excluded", ["D59.32", "M31.1", "D59.0", "A04.3", "N17.0-N17.9"])
+        drug_name = restrictions_data.get("drug_name", "Drug")
+        mac_name = restrictions_data.get("mac_name", "MAC")
+        mac_jurisdiction = restrictions_data.get("mac_jurisdiction", "")
+        lcd_id_val = restrictions_data.get("lcd_id", "LCD")
+        effective_date = restrictions_data.get("effective_date", "TBD")
+        icd_supported = restrictions_data.get("icd_codes_supported", [])
+        icd_excluded = restrictions_data.get("icd_codes_excluded", [])
         icd_recs = mapping.get("icd_code_recommendations", {})
 
+        # Build dynamic external citations from live-fetched data
+        citation_lines = []
+        for lcd_ref in external.get('cms_precedent', []):
+            lcd_ref_id = lcd_ref.get('lcd_id', '')
+            lcd_mac = lcd_ref.get('mac', '')
+            lcd_note = lcd_ref.get('note', '')
+            if lcd_ref_id:
+                citation_lines.append(f"- CMS LCD {lcd_ref_id} ({lcd_mac}) — {lcd_note}")
+        fda_label = external.get('openfda_label', {})
+        fda_brand = fda_label.get('brand_name', 'class analogue')
+        if fda_brand:
+            citation_lines.append(f"- openFDA {fda_brand} label — class analogue reference; first-line FDA approval, no step therapy in indication")
+        ct = external.get('clinicaltrials', {})
+        ct_nct = ct.get('nct_id', '')
+        ct_title = ct.get('title', '')
+        if ct_nct:
+            citation_lines.append(f"- ClinicalTrials.gov {ct_nct} ({ct_title[:80]}) — eligibility and outcomes data")
+        for pub in external.get('pubmed', []):
+            if pub.get('title') and not pub.get('error'):
+                authors = pub.get('authors', ['?'])
+                first_author = authors[0].split()[-1] if authors else '?'
+                journal = pub.get('journal', '')[:30]
+                year = pub.get('pub_date', '')[:4]
+                title = pub.get('title', '')[:80]
+                citation_lines.append(f"- {first_author} et al. {journal} {year}: {title} (eref:{first_author}-{journal[:10].replace(' ','')}-{year})")
+        external_citations_block = "\n".join(citation_lines) if citation_lines else "- No external citations retrieved"
+
+        mac_display = f"{mac_name} ({mac_jurisdiction})" if mac_jurisdiction else mac_name
+        lcd_display = f"{lcd_id_val} (Draft — effective {effective_date})"
+
         context = f"""
-DRUG: Suvaxilumab (anti-C5 complement inhibitor, BLA 761204, approved for aHUS)
-MAC: CGS Administrators LLC (MO/KS/NE/IA)
-LCD: MCD A-XXXXX (Draft — comment period closes July 5, 2026)
+DRUG: {drug_name}
+MAC: {mac_display}
+LCD: {lcd_display}
 {mac_contact_block}
 
 RESTRICTIONS:
@@ -364,20 +406,14 @@ INTERNAL DATA HIGHLIGHTS:
 - CGS jurisdiction patients: {_extract_jurisdiction(internal)}
 
 EXTERNAL CITATIONS:
-- CMS LCD L34007 (Noridian) — no step therapy requirement for C5 inhibitor class in aHUS
-- CMS LCD L34314 (Palmetto GBA) — outpatient initiation permitted for C5 inhibitor class
-- openFDA Soliris label — first-line FDA approval, no step therapy in indication
-- NCT01844856 (RECOVER, eculizumab aHUS) — no plasma exchange prerequisite in eligibility
-- Legendre et al. NEJM 2013 (pivotal eculizumab aHUS trial; eref:Legendre-NEJM-2013)
-- Fakhouri et al. AJKD 2016 (real-world outcomes, outpatient setting; eref:Fakhouri-AJKD-2016)
-- Rondeau et al. KIR 2019 (5-year eculizumab renal registry safety data; eref:Rondeau-KIR-2019)
+{external_citations_block}
 
 Write the full evidence brief now."""
 
         t0 = time.time()
         brief_chunks = []
         try:
-            for chunk in self._llm_stream(STEP5_SYSTEM, context, max_tokens=8192):
+            for chunk in self._llm_stream(STEP5_SYSTEM, context, max_tokens=_OUTPUT_LIMIT):
                 brief_chunks.append(chunk)
                 if on_chunk:
                     on_chunk(chunk)
@@ -466,7 +502,7 @@ EVIDENCE MAPPING SUMMARY:
         case_context: Optional[dict] = None,
     ) -> str:
         restrictions_data = self.step1_ingest(lcd_id)
-        external = self.step2_external_evidence(restrictions_data.get("restrictions", []))
+        external = self.step2_external_evidence(restrictions_data)
         internal = self.step3_internal_evidence()
         mapping = self.step4_evidence_mapping(restrictions_data, external, internal)
         brief = self.step5_generate_brief(restrictions_data, external, internal, mapping, on_chunk, case_context)

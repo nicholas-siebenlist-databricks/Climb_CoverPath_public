@@ -162,8 +162,8 @@ def _clintrials_via_rest(nct_id: str) -> dict:
     }
 
 
-def clinicaltrials_get_study(nct_id: str = "NCT01844856") -> dict:
-    """Fetch study record — MCP-first with automatic fallback to public REST API."""
+def clinicaltrials_get_study(nct_id: str) -> dict:
+    """Fetch a specific study by NCT ID — MCP-first, REST fallback."""
     def _call():
         try:
             return _clintrials_via_mcp(nct_id)
@@ -172,14 +172,47 @@ def clinicaltrials_get_study(nct_id: str = "NCT01844856") -> dict:
     return _retry(_call)
 
 
+def clinicaltrials_find_for_drug(drug_name: str) -> dict:
+    """Search for the most relevant trial for a drug name, then fetch full details.
+
+    Uses MCP clinicaltrials_search_trials → top result → clinicaltrials_get_study.
+    Falls back to the public ClinicalTrials.gov search API if MCP is unavailable.
+    """
+    def _call():
+        try:
+            structured = _mcp_clintrials("clinicaltrials_search_trials", {
+                "query": drug_name,
+                "max_results": 3,
+            })
+            # MCP wraps list results: {"result": [...]}
+            trials = structured.get("result", structured) if isinstance(structured, dict) else structured
+            if not trials:
+                raise ValueError(f"No trials found for '{drug_name}'")
+            nct_id = trials[0].get("nct_id", "")
+            if not nct_id:
+                raise ValueError("Search returned trial with no NCT ID")
+            return _clintrials_via_mcp(nct_id)
+        except Exception:
+            # Fallback: public search API
+            url = (
+                f"https://clinicaltrials.gov/api/v2/studies"
+                f"?query.term={requests.utils.quote(drug_name)}&pageSize=1"
+                f"&fields=NCTId"
+            )
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            studies = resp.json().get("studies", [])
+            if not studies:
+                return {"nct_id": "", "title": "", "source": "no trials found", "eligibility_criteria": ""}
+            nct_id = studies[0].get("protocolSection", {}).get("identificationModule", {}).get("nctId", "")
+            return _clintrials_via_rest(nct_id) if nct_id else {}
+    return _retry(_call)
+
+
 # ── PubMed ────────────────────────────────────────────────────────────────────
 
-DEMO_PMIDS = ["22553501", "25908597", "31395980"]
-
-def pubmed_fetch(pmids: list = None) -> list:
-    """Fetch abstracts from PubMed E-utilities for fixed demo PMIDs."""
-    if pmids is None:
-        pmids = DEMO_PMIDS
+def pubmed_fetch(pmids: list) -> list:
+    """Fetch abstracts from PubMed E-utilities for the given PMID list."""
 
     def _fetch_abstract(pmid):
         url = (
@@ -207,6 +240,26 @@ def pubmed_fetch(pmids: list = None) -> list:
         except Exception as e:
             results.append({"pmid": pmid, "error": str(e), "source": f"PubMed PMID {pmid}"})
     return results
+
+
+def pubmed_search(query: str, max_results: int = 3) -> list:
+    """Search PubMed by query string and return abstracts.
+
+    Uses NCBI esearch to find relevant PMIDs, then pubmed_fetch for abstracts.
+    """
+    def _call():
+        url = (
+            f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+            f"?db=pubmed&term={requests.utils.quote(query)}"
+            f"&retmax={max_results}&retmode=json&sort=relevance"
+        )
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        pmids = resp.json().get("esearchresult", {}).get("idlist", [])
+        if not pmids:
+            return []
+        return pubmed_fetch(pmids)
+    return _retry(_call)
 
 
 # ── Databricks SQL ─────────────────────────────────────────────────────────────
