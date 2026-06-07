@@ -383,19 +383,32 @@ def pubmed_search(query: str, max_results: int = 3) -> list:
 
 # ── Databricks SQL ─────────────────────────────────────────────────────────────
 
+_TABLES = [
+    "trial_enrollment", "trial_outcomes", "trial_adverse_events",
+    "registry_patients", "registry_outcomes",
+]
+
+
+def _qualify_sql(sql: str) -> str:
+    """Prefix every bare table name with catalog.schema to avoid session-level lookup."""
+    import re as _re
+    for t in _TABLES:
+        sql = _re.sub(rf'\b{t}\b', f'{CATALOG}.{SCHEMA}.{t}', sql)
+    return sql
+
+
 def databricks_sql_query(sql: str) -> dict:
     """Execute a read-only SQL query against the coverpath_demo Unity Catalog schema."""
     if not sql.strip().upper().startswith("SELECT"):
         raise ValueError("Only SELECT statements are permitted.")
 
+    qualified_sql = _qualify_sql(sql)
     w = _workspace_client()
 
     def _call():
         resp = w.statement_execution.execute_statement(
             warehouse_id=WAREHOUSE_ID,
-            statement=sql,
-            catalog=CATALOG,
-            schema=SCHEMA,
+            statement=qualified_sql,
             wait_timeout="50s",
         )
         state = resp.status.state.value if resp.status and resp.status.state else "UNKNOWN"
