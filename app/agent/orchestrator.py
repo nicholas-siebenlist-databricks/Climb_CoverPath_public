@@ -27,7 +27,7 @@ MODEL = os.environ.get("COVERPATH_MODEL", "databricks-claude-sonnet-4-6")
 
 # Hard ceiling for this endpoint — applies to every generation step.
 # The model stops when it finishes; the limit only bites on truncation.
-_OUTPUT_LIMIT = 8192
+_OUTPUT_LIMIT = 50000
 
 # Regex to strip ```json ... ``` or ``` ... ``` code fences from LLM output
 _FENCE_RE = re.compile(r'^```(?:json)?\s*\n?(.*?)(?:\n?```\s*)?$', re.DOTALL)
