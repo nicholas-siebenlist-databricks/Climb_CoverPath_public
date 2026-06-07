@@ -68,23 +68,78 @@ def cms_search_precedent(drug_class: str) -> list:
 
 # ── openFDA ───────────────────────────────────────────────────────────────────
 
-def openfda_get_label(brand_name: str = "Soliris") -> dict:
-    """Fetch FDA drug label from openFDA. Uses eculizumab/Soliris as class analogue."""
-    def _call():
-        url = f"https://api.fda.gov/drug/label.json?search=openfda.brand_name:%22{brand_name}%22&limit=1"
+_OPENFDA_MCP_PATH = "/api/2.0/mcp/external/climb_openFDA"
+
+
+def _mcp_openfda(tool_name: str, arguments: dict) -> dict:
+    """Call the climb_openFDA MCP server on the current workspace."""
+    from databricks.sdk import WorkspaceClient
+    w = WorkspaceClient()
+    host = w.config.host.rstrip("/")
+    token = w.config.authenticate().get("Authorization", "").replace("Bearer ", "")
+    resp = requests.post(
+        f"{host}{_OPENFDA_MCP_PATH}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+              "params": {"name": tool_name, "arguments": arguments}},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"MCP error: {data['error']}")
+    result = data["result"]
+    if result.get("isError"):
+        raise RuntimeError(result["content"][0]["text"])
+    return result["structuredContent"]
+
+
+def _normalize_fda_label(item: dict, query: str, source: str) -> dict:
+    """Normalize an openFDA label result from MCP or REST into a consistent shape."""
+    brand_names = item.get("brand_names") or []
+    brand_name = brand_names[0] if brand_names else query
+    warnings = item.get("warnings", item.get("warnings_and_precautions", ""))
+    if isinstance(warnings, list):
+        warnings = warnings[0] if warnings else ""
+    return {
+        "brand_name": brand_name,
+        "generic_name": (item.get("generic_names") or [item.get("generic_name", "")])[0],
+        "indications_and_usage": str(item.get("indications_and_usage", ""))[:2000],
+        "boxed_warning": str(warnings)[:1000],
+        "warnings_and_precautions": str(warnings)[:1000],
+        "clinical_studies": str(item.get("clinical_studies", ""))[:2000],
+        "contraindications": str(item.get("contraindications", ""))[:500],
+        "source": source,
+    }
+
+
+def openfda_get_label(drug_name: str) -> dict:
+    """Fetch FDA drug label for a drug name — MCP-first, REST fallback."""
+
+    def _via_mcp():
+        data = _mcp_openfda("openfda_search_drug_labels", {"query": drug_name, "max_results": 1})
+        items = data.get("result", data) if isinstance(data, dict) else data
+        if not items:
+            raise ValueError(f"No FDA label found for '{drug_name}'")
+        return _normalize_fda_label(items[0], drug_name, "climb_openFDA MCP")
+
+    def _via_rest():
+        url = f"https://api.fda.gov/drug/label.json?search=openfda.brand_name:%22{requests.utils.quote(drug_name)}%22&limit=1"
         resp = requests.get(url, timeout=15)
         resp.raise_for_status()
-        data = resp.json()
-        result = data["results"][0]
-        return {
-            "brand_name": brand_name,
-            "indications_and_usage": result.get("indications_and_usage", [""])[0][:2000],
-            "clinical_studies": result.get("clinical_studies", [""])[0][:2000],
-            "boxed_warning": result.get("boxed_warning", [""])[0][:1000],
-            "warnings_and_precautions": result.get("warnings_and_precautions", [""])[0][:1000],
-            "source": "openFDA Drug Labels API",
-            "note": "Class analogue (eculizumab) used as public-label reference for Suvaxilumab (same mechanism class).",
-        }
+        result = resp.json()["results"][0]
+        return _normalize_fda_label(result, drug_name, "openFDA REST API")
+
+    def _call():
+        try:
+            return _via_mcp()
+        except Exception:
+            return _via_rest()
+
     return _retry(_call)
 
 
