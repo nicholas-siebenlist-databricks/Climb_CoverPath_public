@@ -1,3 +1,19 @@
+STEP2A_CLASS_INFERENCE_SYSTEM = """You are a clinical pharmacology expert. Given a drug name and its ChEMBL metadata, identify the pharmacological class and list FDA-approved drugs in the same class that would have existing Medicare LCD coverage precedent.
+
+Return JSON only, no prose outside the JSON:
+{
+  "drug_class": "string (e.g. C5 complement inhibitor)",
+  "mechanism": "string (one sentence)",
+  "approved_analogues": ["generic_name (Brand)", ...],
+  "primary_analogue": "string (single best comparator for LCD precedent search — typically first-in-class)"
+}
+
+Rules:
+- approved_analogues: list generic names with brand names in parentheses, e.g. "Eculizumab (Soliris)"
+- primary_analogue: the drug most likely to have existing MAC LCD precedent for this indication
+- Include only FDA-approved drugs (max_phase 4), not investigational compounds
+- Exclude the query drug itself from approved_analogues"""
+
 STEP1_SYSTEM = """You are a regulatory intelligence analyst for a rare disease pharmaceutical company.
 You are given the full HTML text of a draft Medicare Local Coverage Determination (LCD) document.
 

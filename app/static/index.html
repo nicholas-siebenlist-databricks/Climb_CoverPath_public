@@ -219,6 +219,7 @@ const { useState, useEffect, useRef, useCallback } = React;
 
 const STEP_LABELS = [
   'Ingest & Extract',
+  'Drug Class Profile',
   'External Evidence',
   'Internal Evidence',
   'Evidence Mapping',
@@ -229,12 +230,14 @@ const STEP_LABELS = [
 // ── Workflow hook ──────────────────────────────────────────────────────────────
 function useWorkflow() {
   const [status, setStatus]           = useState('idle');
-  const [steps, setSteps]             = useState(Array(6).fill({ status: 'pending', message: '' }));
+  const [steps, setSteps]             = useState(Array(7).fill({ status: 'pending', message: '' }));
   const [traces, setTraces]           = useState([]);
+  const [debugLog, setDebugLog]       = useState([]);
   const [briefChunks, setBriefChunks] = useState([]);
   const [threatStatus, setThreatStatus] = useState('Workflow Pending');
   const [judges, setJudges]           = useState({});
   const [extractedData, setExtractedData] = useState(null);
+  const [workflowError, setWorkflowError] = useState(null);
   const [lcdLoaded, setLcdLoaded]     = useState(false);
   const cursorRef   = useRef(0);
   const pollingRef  = useRef(null);
@@ -251,6 +254,8 @@ function useWorkflow() {
       setTraces(prev => [...prev, ev]);
     } else if (ev.type === 'brief_chunk') {
       setBriefChunks(prev => [...prev, ev.content]);
+    } else if (ev.type === 'debug_heartbeat') {
+      setDebugLog(prev => [...prev, ev]);
     } else if (ev.type === 'judge_result') {
       setJudges(prev => ({ ...prev, [ev.judge]: ev.result }));
     } else if (ev.type === 'lcd_loaded') {
@@ -264,6 +269,7 @@ function useWorkflow() {
     } else if (ev.type === 'error') {
       setStatus('error');
       statusRef.current = 'error';
+      setWorkflowError(ev.message || 'Unknown error');
     }
   }, []);
 
@@ -300,13 +306,15 @@ function useWorkflow() {
     cursorRef.current = 0;
     statusRef.current = 'running';
     setStatus('running');
-    setSteps(Array(6).fill({ status: 'pending', message: '' }));
+    setSteps(Array(7).fill({ status: 'pending', message: '' }));
     setTraces([]);
+    setDebugLog([]);
     setBriefChunks([]);
     setJudges({});
     setExtractedData(null);
     setLcdLoaded(false);
     setThreatStatus('Analyzing…');
+    setWorkflowError(null);
 
     try {
       const res = await fetch('/api/run', {
@@ -331,13 +339,15 @@ function useWorkflow() {
     cursorRef.current = 0;
     statusRef.current = 'idle';
     setStatus('idle');
-    setSteps(Array(6).fill({ status: 'pending', message: '' }));
+    setSteps(Array(7).fill({ status: 'pending', message: '' }));
     setTraces([]);
+    setDebugLog([]);
     setBriefChunks([]);
     setJudges({});
     setExtractedData(null);
     setLcdLoaded(false);
     setThreatStatus('Workflow Pending');
+    setWorkflowError(null);
   }, [stopPolling]);
 
   const markCounsel = useCallback(async () => {
@@ -351,11 +361,13 @@ function useWorkflow() {
     status,
     steps,
     traces,
+    debugLog,
     judges,
     extractedData,
     lcdLoaded,
     brief: briefChunks.join(''),
     threatStatus,
+    workflowError,
     runWorkflow,
     reset,
     markCounsel,
@@ -370,6 +382,7 @@ function Sidebar({ page, setPage, threatStatus }) {
     { id: 'brief',     label: 'Evidence Brief',   icon: '≡' },
     { id: 'quality',   label: 'Quality Review',   icon: '✦' },
     { id: 'data',      label: 'Data Sources',     icon: '⊡' },
+    { id: 'genlog',    label: 'Generation Log',   icon: '◉' },
     { id: 'settings',  label: 'Settings',         icon: '⚙' },
   ];
 
@@ -468,7 +481,7 @@ function TracePanel({ traces }) {
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────────
-function DashboardPage({ status, runWorkflow, reset, lcdId, extractedData, lcdLoaded }) {
+function DashboardPage({ status, runWorkflow, reset, lcdId, extractedData, lcdLoaded, workflowError }) {
   const [lcdText, setLcdText] = React.useState(null);
   const isRunning  = status === 'running';
   const isDone     = status === 'done';
@@ -603,7 +616,16 @@ function DashboardPage({ status, runWorkflow, reset, lcdId, extractedData, lcdLo
             <>
               <button className="btn btn-secondary" onClick={reset}>↺ &nbsp;Reset</button>
               {isDone && <span style={{ fontSize: 13, color: '#16A34A', fontWeight: 600 }}>✓ Analysis complete — view the Evidence Brief</span>}
-              {isError && <span style={{ fontSize: 13, color: '#DC2626', fontWeight: 600 }}>✕ Workflow error — reset to retry</span>}
+              {isError && (
+                <div>
+                  <span style={{ fontSize: 13, color: '#DC2626', fontWeight: 600 }}>✕ Workflow error — reset to retry</span>
+                  {workflowError && (
+                    <div style={{ fontSize: 11.5, color: '#DC2626', marginTop: 6, fontFamily: 'monospace', background: '#FEF2F2', padding: '6px 10px', borderRadius: 4, maxWidth: 600, wordBreak: 'break-all' }}>
+                      {workflowError}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -639,7 +661,7 @@ function WorkflowPage({ status, steps, traces, brief }) {
       <div>
         <div className="page-header">
           <div className="page-title">Workflow</div>
-          <div className="page-subtitle">6-step ReAct analysis pipeline with parallel evidence retrieval and LLM quality judges</div>
+          <div className="page-subtitle">7-step ReAct analysis pipeline with ChEMBL drug class profiling, parallel evidence retrieval and LLM quality judges</div>
         </div>
         <div className="empty">
           <div className="empty-icon">▷</div>
@@ -758,6 +780,19 @@ function BriefPage({ brief, status, markCounsel, threatStatus }) {
 }
 
 // ── Data Sources ───────────────────────────────────────────────────────────────
+function ClimbBadge() {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center',
+      background: '#0F172A', borderRadius: 4,
+      padding: '2px 6px', verticalAlign: 'middle',
+      overflow: 'hidden',
+    }}>
+      <img src="/static/climb_logo.png" alt="Climb" style={{ height: 18, display: 'block' }} />
+    </span>
+  );
+}
+
 function DataSourcesPage() {
   const internalTables = [
     { name: 'trial_enrollment',     rows: 127, desc: 'Patient enrollment — initiation setting (Inpatient/Outpatient) and prior PE course history', keys: 'patient_id, initiation_setting, prior_pe_courses' },
@@ -767,10 +802,11 @@ function DataSourcesPage() {
     { name: 'registry_outcomes',    rows: 936, desc: 'Monthly real-world outcomes through 12 months — hospitalization and sustained TMA response', keys: 'registry_id, months_from_start, sustained_tma_response, hospitalization_required' },
   ];
   const externalSources = [
-    { name: 'CMS Coverage Database', type: 'REST (fixture)', use: 'Draft LCD MCD-A-XXXXX text + prior LCDs L38291 & L39104 for C5 class precedent' },
-    { name: 'openFDA Drug Labels API', type: 'REST', use: 'Soliris (eculizumab) label as class analogue; same mechanism, no step therapy in indication' },
-    { name: 'ClinicalTrials.gov v2 API', type: 'REST', use: 'NCT01844856 — RECOVER pivotal eculizumab aHUS trial; no plasma exchange prerequisite' },
-    { name: 'PubMed E-utilities', type: 'REST', use: 'PMIDs 22553501 (Legendre NEJM 2013), 25908597 (Fakhouri 2015), 31395980 (practice guidelines)' },
+    { name: 'ChEMBL',                  mcp: 'climb_chembl',         use: 'Drug class profiling — confirms ChEMBL ID, molecule type, approval phase; used to verify class analogues (e.g. eculizumab, ravulizumab)' },
+    { name: 'openFDA Drug Labels',      mcp: 'climb_openFDA',        use: 'Soliris (eculizumab) label as class analogue reference; first-line FDA approval, no step therapy in indication' },
+    { name: 'ClinicalTrials.gov v2',    mcp: 'climb_clintrials_v2',  use: 'NCT01844856 — RECOVER pivotal eculizumab aHUS trial; no plasma exchange prerequisite in eligibility criteria' },
+    { name: 'PubMed',                   mcp: 'climb_pubmed',         use: 'PMIDs 22553501 (Legendre NEJM 2013), 25908597 (Fakhouri 2015), 31395980 (practice guidelines)' },
+    { name: 'CMS Coverage Database',    mcp: null,                   use: 'Draft LCD MCD-A-XXXXX text (fixture) + prior LCDs L38291 & L39104 for C5 class precedent' },
   ];
 
   return (
@@ -800,16 +836,17 @@ function DataSourcesPage() {
       </div>
 
       <div className="card">
-        <div className="card-title">External — Public APIs</div>
+        <div className="card-title">External — APIs &amp; MCPs</div>
         <table className="data-table">
           <thead>
-            <tr><th>Source</th><th>Type</th><th>Used For</th></tr>
+            <tr><th>Source</th><th>Provider</th><th>MCP ID</th><th>Used For</th></tr>
           </thead>
           <tbody>
             {externalSources.map(s => (
               <tr key={s.name}>
                 <td style={{ fontWeight: 600 }}>{s.name}</td>
-                <td><span className={`tag ${s.type.includes('fixture') ? 'tag-fix' : 'tag-ext'}`}>{s.type}</span></td>
+                <td style={{ whiteSpace: 'nowrap' }}>{s.mcp ? <ClimbBadge /> : <span style={{ fontSize: 11, color: '#94A3B8' }}>CMS / fixture</span>}</td>
+                <td style={{ fontFamily: 'monospace', fontSize: 11.5, color: '#64748B' }}>{s.mcp || '—'}</td>
                 <td style={{ fontSize: 12.5, color: '#64748B' }}>{s.use}</td>
               </tr>
             ))}
@@ -1006,35 +1043,12 @@ function QualityReviewPage({ judges, status }) {
 }
 
 // ── Settings ───────────────────────────────────────────────────────────────────
-function SettingsPage({ lcdId, setLcdId, macDirector, setMacDirector }) {
+function SettingsPage({ macDirector, setMacDirector }) {
   return (
     <div>
       <div className="page-header">
         <div className="page-title">Settings</div>
-        <div className="page-subtitle">Workflow configuration parameters</div>
-      </div>
-      <div className="card" style={{ maxWidth: 500 }}>
-        <div className="card-title">Analysis Configuration</div>
-        <div className="form-group">
-          <label className="form-label">LCD Identifier</label>
-          <input className="form-input" value={lcdId} onChange={e => setLcdId(e.target.value)} placeholder="MCD-A-XXXXX" />
-          <div className="form-hint">CMS Local Coverage Determination ID to analyze</div>
-        </div>
-        <div className="form-group">
-          <label className="form-label">SQL Warehouse</label>
-          <input className="form-input" value="722c356fdb9695dd" readOnly />
-          <div className="form-hint">Serverless SQL warehouse — read-only query execution</div>
-        </div>
-        <div className="form-group">
-          <label className="form-label">Unity Catalog Schema</label>
-          <input className="form-input" value="siebenlist_catalog.coverpath_demo" readOnly />
-          <div className="form-hint">5 Delta tables with synthetic trial and registry data</div>
-        </div>
-        <div className="form-group">
-          <label className="form-label">Foundation Model</label>
-          <input className="form-input" value="databricks-claude-sonnet-4-6" readOnly />
-          <div className="form-hint">Served via Databricks Model Serving — no external API key required</div>
-        </div>
+        <div className="page-subtitle">Submission configuration</div>
       </div>
 
       <div className="card" style={{ maxWidth: 500 }}>
@@ -1077,13 +1091,178 @@ function SettingsPage({ lcdId, setLcdId, macDirector, setMacDirector }) {
   );
 }
 
+// ── Generation Log ─────────────────────────────────────────────────────────────
+function GenerationLogPage({ debugLog, traces, status, brief }) {
+  const logEndRef = useRef(null);
+  const [serverDebug, setServerDebug] = React.useState(null);
+  const [debugError, setDebugError]   = React.useState(null);
+
+  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [debugLog]);
+
+  const fetchServerDebug = React.useCallback(async () => {
+    try {
+      const res  = await fetch('/api/debug');
+      const data = await res.json();
+      setServerDebug(data);
+      setDebugError(null);
+    } catch (e) {
+      setDebugError(String(e));
+    }
+  }, []);
+
+  // Auto-refresh server debug every 5s while workflow is running
+  useEffect(() => {
+    fetchServerDebug();
+    if (status !== 'running') return;
+    const id = setInterval(fetchServerDebug, 5000);
+    return () => clearInterval(id);
+  }, [status, fetchServerDebug]);
+
+  const briefTraces = traces.filter(t =>
+    t.tool && (t.tool.startsWith('llm_brief') || t.tool === 'brief_heartbeat')
+  );
+  const totalChars = brief ? brief.length : 0;
+  const latestHb   = debugLog.length > 0 ? debugLog[debugLog.length - 1] : null;
+
+  return (
+    <div className="page-shell">
+      <div className="page-header">
+        <div className="page-title">Generation Log</div>
+        <div className="page-subtitle">Real-time heartbeats + server-side event diagnostics for brief generation</div>
+      </div>
+
+      {/* Summary bar */}
+      <div className="stats-row" style={{ marginBottom: 20 }}>
+        <div className="stat-card">
+          <div className="stat-value">{totalChars.toLocaleString()}</div>
+          <div className="stat-label">Brief chars generated</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{debugLog.length}</div>
+          <div className="stat-label">Heartbeats (frontend)</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{serverDebug ? serverDebug.heartbeat_count : '—'}</div>
+          <div className="stat-label">Heartbeats (server)</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{serverDebug ? serverDebug.total_events : '—'}</div>
+          <div className="stat-label">Total server events</div>
+        </div>
+      </div>
+
+      {/* Server-side debug panel */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Server Diagnostics <span style={{ fontSize: 11, color: '#94A3B8', marginLeft: 8 }}>auto-refreshes every 5s while running</span></span>
+          <button onClick={fetchServerDebug} style={{ fontSize: 11, padding: '2px 10px', cursor: 'pointer', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: 4 }}>
+            Refresh now
+          </button>
+        </div>
+        <div style={{ fontFamily: 'monospace', fontSize: 12, padding: '12px 16px' }}>
+          {debugError && <div style={{ color: '#DC2626' }}>Error: {debugError}</div>}
+          {serverDebug && (
+            <>
+              <div style={{ marginBottom: 8 }}>
+                <span style={{ color: '#94A3B8' }}>Status:</span>{' '}
+                <span style={{ fontWeight: 600, color: serverDebug.status === 'running' ? '#16A34A' : '#1B3A5C' }}>{serverDebug.status}</span>
+                <span style={{ color: '#94A3B8', marginLeft: 16 }}>Total events in queue:</span>{' '}
+                <span style={{ fontWeight: 600 }}>{serverDebug.total_events}</span>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <span style={{ color: '#94A3B8' }}>Event types:</span>{' '}
+                {Object.entries(serverDebug.type_counts || {}).map(([type, count]) => (
+                  <span key={type} style={{
+                    display: 'inline-block', margin: '2px 4px', padding: '1px 8px',
+                    background: type === 'debug_heartbeat' ? '#DCFCE7' : '#F1F5F9',
+                    borderRadius: 4, fontSize: 11,
+                    fontWeight: type === 'debug_heartbeat' ? 700 : 400,
+                    color: type === 'debug_heartbeat' ? '#16A34A' : '#475569',
+                  }}>
+                    {type}: {count}
+                  </span>
+                ))}
+              </div>
+              {serverDebug.heartbeats.length > 0 && (
+                <div>
+                  <span style={{ color: '#94A3B8' }}>Latest server heartbeat:</span>{' '}
+                  <span>#{serverDebug.heartbeats[serverDebug.heartbeats.length - 1].hb} · {serverDebug.heartbeats[serverDebug.heartbeats.length - 1].elapsed_s}s elapsed</span>
+                </div>
+              )}
+              {serverDebug.heartbeats.length === 0 && (
+                <div style={{ color: '#E05A2B', fontWeight: 600 }}>
+                  ⚠ No debug_heartbeat events on server — step 5 may not have started, or _emit_heartbeat is throwing silently
+                </div>
+              )}
+              {serverDebug.errors && serverDebug.errors.length > 0 && (
+                <div style={{ marginTop: 8, padding: '6px 10px', background: '#FEF2F2', borderRadius: 4 }}>
+                  <span style={{ color: '#DC2626', fontWeight: 700 }}>Workflow error: </span>
+                  <span style={{ color: '#DC2626' }}>{serverDebug.errors[serverDebug.errors.length - 1].message}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Heartbeat log */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header">Frontend Heartbeat Log <span style={{ fontSize: 11, color: '#94A3B8', marginLeft: 8 }}>heartbeat #0 fires immediately; subsequent every 15s</span></div>
+        <div style={{ fontFamily: 'monospace', fontSize: 12.5, maxHeight: 260, overflowY: 'auto', padding: '12px 16px' }}>
+          {debugLog.length === 0 && (
+            <div style={{ color: '#94A3B8', fontStyle: 'italic' }}>
+              {status === 'running' ? 'Waiting for heartbeat events from server…' : 'No heartbeat data — run the workflow to populate this log.'}
+            </div>
+          )}
+          {debugLog.map((hb, i) => (
+            <div key={i} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: '1px solid #F1F5F9' }}>
+              <span style={{ color: '#94A3B8' }}>{hb.ts}</span>
+              {' · '}
+              <span style={{ color: '#1B3A5C', fontWeight: 600 }}>#{hb.hb}</span>
+              {' · '}
+              <span style={{ color: hb.chars > 0 ? '#16A34A' : '#E05A2B', fontWeight: 600 }}>
+                {hb.chars.toLocaleString()} chars
+              </span>
+              {' · '}
+              <span>{hb.elapsed_s}s elapsed</span>
+              {' · '}
+              <span style={{ color: '#5a6b78' }}>{hb.rate_cps} chars/sec</span>
+              {!hb.first_chunk && <span style={{ color: '#E05A2B', marginLeft: 8, fontWeight: 600 }}>⚠ no first token yet</span>}
+            </div>
+          ))}
+          <div ref={logEndRef} />
+        </div>
+      </div>
+
+      {/* Brief-related tool traces */}
+      <div className="card">
+        <div className="card-header">Brief Generation Trace Events</div>
+        <div style={{ fontFamily: 'monospace', fontSize: 12, maxHeight: 260, overflowY: 'auto', padding: '12px 16px' }}>
+          {briefTraces.length === 0 && (
+            <div style={{ color: '#94A3B8', fontStyle: 'italic' }}>No brief trace events yet.</div>
+          )}
+          {briefTraces.map((t, i) => (
+            <div key={i} style={{ marginBottom: 5, display: 'flex', gap: 10 }}>
+              <span style={{ color: '#94A3B8', minWidth: 60 }}>{t.ts}</span>
+              <span style={{ color: '#C97B1A', minWidth: 160, fontWeight: 600 }}>{t.tool}</span>
+              <span style={{ color: t.status === 'error' ? '#DC2626' : t.status === 'warn' ? '#D97706' : '#16A34A' }}>
+                {t.output}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── App root ───────────────────────────────────────────────────────────────────
 function App() {
   const [page, setPage]           = useState('dashboard');
   const [lcdId, setLcdId]         = useState('MCD-A-XXXXX');
   const [macDirector, setMacDirector] = useState({ name: '', phone: '', email: '' });
   const prevStatus                = useRef('idle');
-  const { status, steps, traces, judges, extractedData, lcdLoaded, brief, threatStatus, runWorkflow, reset, markCounsel } = useWorkflow();
+  const { status, steps, traces, debugLog, judges, extractedData, lcdLoaded, brief, threatStatus, workflowError, runWorkflow, reset, markCounsel } = useWorkflow();
 
   useEffect(() => {
     if (prevStatus.current === 'idle' && status === 'running') {
@@ -1107,6 +1286,7 @@ function App() {
     brief:     'Evidence Brief',
     quality:   'Quality Review',
     data:      'Data Sources',
+    genlog:    'Generation Log',
     settings:  'Settings',
   };
 
@@ -1128,12 +1308,13 @@ function App() {
           )}
         </div>
         <div className="content">
-          {page === 'dashboard' && <DashboardPage status={status} runWorkflow={() => runWorkflow(lcdId, caseContext)} reset={reset} lcdId={lcdId} extractedData={extractedData} lcdLoaded={lcdLoaded} />}
+          {page === 'dashboard' && <DashboardPage status={status} runWorkflow={() => runWorkflow(lcdId, caseContext)} reset={reset} lcdId={lcdId} extractedData={extractedData} lcdLoaded={lcdLoaded} workflowError={workflowError} />}
           {page === 'workflow'  && <WorkflowPage  status={status} steps={steps} traces={traces} brief={brief} />}
           {page === 'brief'     && <BriefPage     brief={brief} status={status} markCounsel={markCounsel} threatStatus={threatStatus} />}
           {page === 'quality'   && <QualityReviewPage judges={judges} status={status} />}
           {page === 'data'      && <DataSourcesPage />}
-          {page === 'settings'  && <SettingsPage lcdId={lcdId} setLcdId={setLcdId} macDirector={macDirector} setMacDirector={setMacDirector} />}
+          {page === 'genlog'    && <GenerationLogPage debugLog={debugLog} traces={traces} status={status} brief={brief} />}
+          {page === 'settings'  && <SettingsPage macDirector={macDirector} setMacDirector={setMacDirector} />}
         </div>
       </div>
     </>

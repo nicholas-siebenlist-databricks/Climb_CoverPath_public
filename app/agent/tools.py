@@ -75,6 +75,78 @@ def cms_search_precedent(drug_class: str) -> list:
     ]
 
 
+# ── ChEMBL ───────────────────────────────────────────────────────────────────
+
+_CHEMBL_MCP_PATH = "/api/2.0/mcp/external/climb_chembl"
+
+
+def _mcp_chembl(tool_name: str, arguments: dict) -> dict:
+    """Call the climb_chembl MCP server on the current workspace."""
+    w = _workspace_client()
+    host = w.config.host.rstrip("/")
+    token = w.config.authenticate().get("Authorization", "").replace("Bearer ", "")
+    resp = requests.post(
+        f"{host}{_CHEMBL_MCP_PATH}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+              "params": {"name": tool_name, "arguments": arguments}},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"ChEMBL MCP error: {data['error']}")
+    result = data["result"]
+    if result.get("isError"):
+        raise RuntimeError(result["content"][0]["text"])
+    return result["structuredContent"]
+
+
+def chembl_drug_profile(drug_name: str) -> dict:
+    """Return ChEMBL profile for a drug: ChEMBL ID, indication class, max phase."""
+    data = _retry(lambda: _mcp_chembl("chembl_search_molecules", {"query": drug_name, "max_results": 5}), retries=2, backoff=3.0)
+    molecules = data.get("result", [])
+    if not molecules:
+        return {"drug_name": drug_name, "chembl_id": None, "indication_class": None}
+    # Prefer the molecule with the highest development phase (most likely to be approved drug)
+    best = max(molecules, key=lambda m: m.get("max_phase") or 0)
+    return {
+        "drug_name": drug_name,
+        "chembl_id": best.get("chembl_id"),
+        "indication_class": best.get("indication_class"),
+        "max_phase": best.get("max_phase"),
+        "synonyms": best.get("synonyms", []),
+    }
+
+
+def chembl_verify_analogue(drug_name: str) -> dict | None:
+    """Verify a drug name against ChEMBL — returns molecule dict if phase >= 3, else None.
+
+    Used to confirm LLM-inferred class analogues are real approved drugs.
+    Strips brand-name parentheticals before searching (e.g. "Eculizumab (Soliris)" → "Eculizumab").
+    """
+    import re as _re
+    search_name = _re.sub(r'\s*\(.*', '', drug_name).strip()
+    data = _retry(lambda: _mcp_chembl("chembl_search_molecules", {"query": search_name, "max_results": 3}), retries=2, backoff=3.0)
+    molecules = data.get("result", [])
+    if not molecules:
+        return None
+    best = max(molecules, key=lambda m: m.get("max_phase") or 0)
+    if not best.get("max_phase") or best["max_phase"] < 3:
+        return None
+    return {
+        "name": best.get("pref_name", search_name).title(),
+        "chembl_id": best.get("chembl_id"),
+        "max_phase": best.get("max_phase"),
+        "indication_class": best.get("indication_class"),
+        "synonyms": best.get("synonyms", [])[:5],
+    }
+
+
 # ── openFDA ───────────────────────────────────────────────────────────────────
 
 _OPENFDA_MCP_PATH = "/api/2.0/mcp/external/climb_openFDA"
@@ -136,11 +208,15 @@ def openfda_get_label(drug_name: str) -> dict:
         return _normalize_fda_label(items[0], drug_name, "climb_openFDA MCP")
 
     def _via_rest():
-        url = f"https://api.fda.gov/drug/label.json?search=openfda.brand_name:%22{requests.utils.quote(drug_name)}%22&limit=1"
-        resp = requests.get(url, timeout=15)
-        resp.raise_for_status()
-        result = resp.json()["results"][0]
-        return _normalize_fda_label(result, drug_name, "openFDA REST API")
+        encoded = requests.utils.quote(drug_name)
+        for field in ("openfda.brand_name", "openfda.generic_name", "openfda.substance_name"):
+            url = f"https://api.fda.gov/drug/label.json?search={field}:%22{encoded}%22&limit=1"
+            resp = requests.get(url, timeout=15)
+            if resp.status_code == 200:
+                results = resp.json().get("results", [])
+                if results:
+                    return _normalize_fda_label(results[0], drug_name, "openFDA REST API")
+        raise ValueError(f"No FDA label found for '{drug_name}' via brand, generic, or substance name")
 
     def _call():
         try:

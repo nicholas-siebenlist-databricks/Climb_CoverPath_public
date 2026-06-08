@@ -165,6 +165,32 @@ def mark_counsel():
     return jsonify({"ok": True})
 
 
+@app.route("/api/debug")
+def get_debug():
+    """Diagnostic endpoint: event type counts, heartbeats, and last error."""
+    with _lock:
+        total = len(_events)
+        type_counts: dict = {}
+        heartbeats = []
+        errors = []
+        for ev in _events:
+            t = ev.get("type", "unknown")
+            type_counts[t] = type_counts.get(t, 0) + 1
+            if t == "debug_heartbeat":
+                heartbeats.append(ev)
+            elif t == "error":
+                errors.append(ev)
+        status = _state["status"]
+    return jsonify({
+        "status": status,
+        "total_events": total,
+        "type_counts": type_counts,
+        "heartbeat_count": len(heartbeats),
+        "heartbeats": heartbeats,
+        "errors": errors,
+    })
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
